@@ -1,0 +1,4 @@
+github.com/akzj/sstore v0.0.0-20200727070139-930be3c29153 h1:lukphbhpsw1j/UGeGskZW9dimhWOU6903Jw5mFaXRAA=
+github.com/akzj/sstore v0.0.0-20200727070139-930be3c29153/go.mod h1:fURfWxV56Ty6WrjC57VISSyr+5tRfpvWn+6wgY/IuA8=
+github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
+github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
