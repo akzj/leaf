@@ -4,7 +4,10 @@ import (
 	"github.com/akzj/sstore"
 	"github.com/akzj/streamIO/proto"
 	"github.com/akzj/streamIO/stream-server/store"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"io"
+	"strings"
 )
 
 type StreamServer struct {
@@ -20,15 +23,22 @@ func (server *StreamServer) ReadStream(request *proto.ReadStreamRequest, stream 
 			}
 			return nil
 		})
-		if err != nil {
-			return err
+		if err == nil {
+			return nil
+		}
+		if strings.Contains(err.Error(), sstore.ErrNoFindStream.Error()) {
+			return status.Errorf(codes.NotFound, err.Error())
+		}
+		if strings.Contains(err.Error(), sstore.ErrOffset.Error()) {
+			return status.Errorf(codes.FailedPrecondition, err.Error())
 		}
 		return nil
 	}
 }
 
 func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamServer) error {
-	for {
+	var requestError error
+	for requestError == nil {
 		request, err := stream.Recv()
 		if err == io.EOF {
 			return nil
@@ -39,32 +49,20 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 		server.store.WriteRequest(request, func(offset int64, err error) {
 			if err != nil {
 				if err == sstore.ErrOffset {
-					err = stream.Send(&proto.WriteStreamResponse{
-						Status:    proto.WriteStreamResponse_OffsetError,
-						RequestId: request.RequestId,
-					})
-					if err != nil {
-						//todo log error
-					}
+					requestError = status.Error(codes.FailedPrecondition, err.Error())
 					return
 				}
-				err = stream.Send(&proto.WriteStreamResponse{
-					Status:    proto.WriteStreamResponse_OffsetError,
-					RequestId: request.RequestId,
-				})
-				if err != nil {
-					//todo log error
-				}
+				err = status.Error(codes.ResourceExhausted, err.Error())
 				return
 			}
 			err = stream.Send(&proto.WriteStreamResponse{
-				Status:    proto.WriteStreamResponse_ok,
 				Offset:    offset,
 				RequestId: request.RequestId,
 			})
 			if err != nil {
-				return
+				requestError = err
 			}
 		})
 	}
+	return requestError
 }

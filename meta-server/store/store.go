@@ -37,7 +37,7 @@ func (store *Store) CreateStream(name string) (*StreamInfoItem, error) {
 		return nil, errors.WithStack(err)
 	}
 	if exist {
-		return nil, errors.Errorf("stream name %s exist", name)
+		return nil, errors.Errorf("stream name exist %s", name)
 	}
 	return streamInfoItem, nil
 }
