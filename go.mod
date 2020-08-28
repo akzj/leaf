@@ -4,6 +4,7 @@ go 1.13
 
 require (
 	github.com/akzj/mmdb v0.1.0
+	github.com/akzj/sstore v0.0.0-20200827021529-505dabc3ba01
 	github.com/golang/protobuf v1.4.2
 	github.com/google/btree v1.0.0
 	github.com/pkg/errors v0.9.1
