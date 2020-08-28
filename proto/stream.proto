@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package proto;
+option go_package = ".;proto";
+
+//stream operator
+
+message WriteStreamRequest{
+  int64 stream_id = 1;
+  int64 offset = 2;
+  bytes data = 3;
+  int64 request_id = 4;
+}
+
+message WriteStreamResponse{
+  enum Status {
+    ok = 0;
+    OffsetError = 1;
+  }
+  Status status = 1;
+  int64 offset = 2;
+  int64 request_id = 3;
+}
+
+message ReadStreamRequest {
+  int64 stream_id = 1;
+  int64 request_id = 5;
+  int64 offset = 2;
+  int32 size = 3;
+  bool watch = 4;
+}
+
+message StopReadStreamRequest{
+  int64 stream_id = 1;
+  int64 request_id = 2;
+}
+
+message StopReadStreamResponse{
+  int64 stream_id = 1;
+  int64 request_id = 2;
+}
+
+message ReadStreamResponse{
+  int64 stream_id = 1;
+  int64 request_id = 3;
+  int64 offset = 2;
+  bytes data = 4;
+  bool next = 5;
+}
+
+
+service stream_service{
+  rpc WriteStream(stream WriteStreamRequest)returns(stream ReadStreamRequest){}
+  rpc ReadStream(stream ReadStreamRequest)returns(stream ReadStreamRequest){}
+  rpc StopReadStream(ReadStreamRequest)returns(StopReadStreamResponse){}
+}
