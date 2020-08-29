@@ -1,68 +1,44 @@
 package stream_server
 
 import (
-	"github.com/akzj/sstore"
-	"github.com/akzj/streamIO/proto"
+	"context"
+	metaServerStore "github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/stream-server/store"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-	"io"
-	"strings"
+	"sync"
 )
 
 type StreamServer struct {
-	store *store.Store
+	ctx        context.Context
+	cancelFunc context.CancelFunc
+	wg         sync.WaitGroup
+	Options
+	ServerInfoBase *metaServerStore.ServerInfoBase
+	store          *store.Store
 }
 
-func (server *StreamServer) ReadStream(request *proto.ReadStreamRequest, stream proto.StreamService_ReadStreamServer) error {
-	for {
-		err := server.store.ReadRequest(stream.Context(), request, func(offset int64, data []byte) error {
-			if err := stream.Send(&proto.ReadStreamResponse{}); err != nil {
-				//todo log error
-				return err
-			}
-			return nil
-		})
-		if err == nil {
-			return nil
-		}
-		if strings.Contains(err.Error(), sstore.ErrNoFindStream.Error()) {
-			return status.Errorf(codes.NotFound, err.Error())
-		}
-		if strings.Contains(err.Error(), sstore.ErrOffset.Error()) {
-			return status.Errorf(codes.FailedPrecondition, err.Error())
-		}
+func NewStreamServer(options Options) *StreamServer {
+	return &StreamServer{
+		Options:        options,
+		ServerInfoBase: nil,
+		store:          nil,
+	}
+}
+
+func (server *StreamServer) Start() {
+	go server.heartbeatLoop()
+}
+
+func (server *StreamServer) Stop(ctx context.Context) error{
+	ch := make(chan interface{})
+	go func() {
+		server.wg.Wait()
+		close(ch)
+	}()
+	server.cancelFunc()
+	select {
+	case <-ch:
 		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-}
-
-func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamServer) error {
-	var requestError error
-	for requestError == nil {
-		request, err := stream.Recv()
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		server.store.WriteRequest(request, func(offset int64, err error) {
-			if err != nil {
-				if err == sstore.ErrOffset {
-					requestError = status.Error(codes.FailedPrecondition, err.Error())
-					return
-				}
-				err = status.Error(codes.ResourceExhausted, err.Error())
-				return
-			}
-			err = stream.Send(&proto.WriteStreamResponse{
-				Offset:    offset,
-				RequestId: request.RequestId,
-			})
-			if err != nil {
-				requestError = err
-			}
-		})
-	}
-	return requestError
 }

@@ -60,7 +60,7 @@ service meta_service{
   rpc AddStreamServer(AddStreamServerRequest)returns (AddStreamServerResponse){}
   rpc ListStreamServer(google.protobuf.Empty)returns(ListStreamServerResponse){}
   rpc DeleteStreamServer(DeleteStreamServerRequest)returns(google.protobuf.Empty){}
-  rpc StreamServerHeartbeat(stream StreamServerHeartbeatItem)returns(google.protobuf.Empty){}
+  rpc StreamServerHeartbeat(stream StreamServerHeartbeatItem)returns(stream google.protobuf.Empty){}
   rpc CreateStream(CreateStreamRequest)returns(CreateStreamResponse){}
   rpc GetStreamInfo(GetStreamInfoRequest)returns(GetStreamInfoResponse){}
   rpc SetStreamReadOffset(SetStreamReadOffsetRequest)returns(google.protobuf.Empty){}

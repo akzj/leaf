@@ -16,13 +16,15 @@ type MetaServer struct {
 	store *store.Store
 }
 
-func (server *MetaServer) StreamServerHeartbeat(HeartbeatServer proto.MetaService_StreamServerHeartbeatServer) error {
+func (server *MetaServer) StreamServerHeartbeat(stream proto.MetaService_StreamServerHeartbeatServer) error {
 	for {
-		item, err := HeartbeatServer.Recv()
+		item, err := stream.Recv()
 		if err == io.EOF {
+			//todo log error
 			return nil
 		}
 		if err != nil {
+			//todo log error
 			return err
 		}
 		if err := server.store.InsertStreamServerHeartbeatItem(item); err != nil {
@@ -31,15 +33,21 @@ func (server *MetaServer) StreamServerHeartbeat(HeartbeatServer proto.MetaServic
 			}
 			return status.Error(codes.Internal, err.Error())
 		}
+		if err = stream.Send(&empty.Empty{}); err != nil {
+			//todo log error
+			return err
+		}
 	}
 }
 
 func (server *MetaServer) AddStreamServer(ctx context.Context, request *proto.AddStreamServerRequest) (*proto.AddStreamServerResponse, error) {
 	if request.StreamServerInfoItem.GetBase() == nil {
+		//todo log error
 		return nil, status.Error(codes.InvalidArgument, "request.StreamServerInfoItem.Base nil error")
 	}
 	streamServerInfoItem, err := server.store.AddStreamServer(request.StreamServerInfoItem)
 	if err != nil {
+		//todo log error
 		return nil, status.Error(codes.Aborted, err.Error())
 	}
 	return &proto.AddStreamServerResponse{StreamServerInfoItem: streamServerInfoItem}, nil
@@ -48,9 +56,11 @@ func (server *MetaServer) AddStreamServer(ctx context.Context, request *proto.Ad
 func (server *MetaServer) ListStreamServer(ctx context.Context, empty *empty.Empty) (*proto.ListStreamServerResponse, error) {
 	streamServerInfoItems, err := server.store.ListStreamServer()
 	if err != nil {
+		//todo log error
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	if len(streamServerInfoItems) == 0 {
+		//todo log error
 		return nil, status.Error(codes.NotFound, "no find streamServerInfoItems")
 	}
 	return &proto.ListStreamServerResponse{Items: streamServerInfoItems}, nil
@@ -68,6 +78,7 @@ func (server *MetaServer) DeleteStreamServer(ctx context.Context, request *proto
 func (server *MetaServer) CreateStream(ctx context.Context, request *proto.CreateStreamRequest) (*proto.CreateStreamResponse, error) {
 	streamInfoItem, err := server.store.CreateStream(request.Name)
 	if err != nil {
+		//todo log error
 		if strings.HasPrefix(err.Error(), "stream name exist") {
 			return nil, status.Error(codes.AlreadyExists, err.Error())
 		}
@@ -81,9 +92,11 @@ func (server *MetaServer) CreateStream(ctx context.Context, request *proto.Creat
 func (server *MetaServer) GetStreamInfo(ctx context.Context, request *proto.GetStreamInfoRequest) (*proto.GetStreamInfoResponse, error) {
 	streamInfoItem, err := server.store.GetStream(request.Name)
 	if err != nil {
+		//todo log error
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	if streamInfoItem == nil {
+		//todo log error
 		return nil, status.Error(codes.NotFound, "no find StreamInfo")
 	}
 	return &proto.GetStreamInfoResponse{Info: streamInfoItem}, nil
@@ -92,6 +105,7 @@ func (server *MetaServer) GetStreamInfo(ctx context.Context, request *proto.GetS
 func (server *MetaServer) SetStreamReadOffset(ctx context.Context, request *proto.SetStreamReadOffsetRequest) (*empty.Empty, error) {
 	if err := server.store.SetOffSet(request.SSOffsets); err != nil {
 		if strings.Contains(err.Error(), mmdb.ErrConflict.Error()) {
+			//todo log error
 			return nil, status.Error(codes.Aborted, err.Error())
 		}
 		return nil, status.Error(codes.Internal, err.Error())
@@ -102,6 +116,7 @@ func (server *MetaServer) SetStreamReadOffset(ctx context.Context, request *prot
 func (server *MetaServer) GetStreamReadOffset(ctx context.Context, request *proto.GetStreamReadOffsetRequest) (*proto.GetStreamReadOffsetResponse, error) {
 	ssOffsetItem, err := server.store.GetOffset(request.SessionId, request.StreamId)
 	if err != nil {
+		//todo log error
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &proto.GetStreamReadOffsetResponse{Offset: ssOffsetItem.Offset}, nil

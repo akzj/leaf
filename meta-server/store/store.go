@@ -3,14 +3,43 @@ package store
 import (
 	"github.com/akzj/mmdb"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"math"
+	"sync"
 )
 
 type Store struct {
-	db mmdb.DB
+	log *logrus.Logger
+	db  mmdb.DB
+
+	//protect for metadata
+	metaDataItemLocker sync.Mutex
+}
+
+func OpenStore(options mmdb.Options, logger *logrus.Logger) *Store {
+	db, err := mmdb.OpenDB(options.WithUnmarshalBinary(UnmarshalItem))
+	if err != nil {
+		logger.Panic(err)
+	}
+
+	if err := db.Update(func(tx mmdb.Transaction) error {
+		item := tx.Get(metaDataItemKey)
+		if item == nil {
+			tx.ReplaceOrInsert(&MetaDataItem{NextStreamId: 1, Key: 1})
+		}
+		return nil
+	}); err != nil {
+		logger.Panic(err)
+	}
+	return &Store{
+		log: logger,
+		db:  db,
+	}
 }
 
 func (store *Store) CreateStream(name string) (*StreamInfoItem, error) {
+	store.metaDataItemLocker.Lock()
+	defer store.metaDataItemLocker.Unlock()
 	var exist = false
 	streamInfoItem := NewStreamInfoItem(0, name)
 	err := store.db.Update(func(tx mmdb.Transaction) error {
@@ -34,6 +63,7 @@ func (store *Store) CreateStream(name string) (*StreamInfoItem, error) {
 		return nil
 	})
 	if err != nil {
+		store.log.Warn(err)
 		return nil, errors.WithStack(err)
 	}
 	if exist {
@@ -51,18 +81,24 @@ func (store *Store) GetStream(name string) (*StreamInfoItem, error) {
 		return nil
 	})
 	if err != nil {
+		store.log.Warn(err)
 		return nil, err
 	}
 	return streamInfoItem, nil
 }
 
 func (store *Store) SetOffSet(items []*SSOffsetItem) error {
-	return store.db.Update(func(tx mmdb.Transaction) error {
+	err := store.db.Update(func(tx mmdb.Transaction) error {
 		for _, item := range items {
 			tx.ReplaceOrInsert(item)
 		}
 		return nil
 	})
+	if err != nil {
+		store.log.Warn(err)
+		return errors.WithStack(err)
+	}
+	return nil
 }
 
 func (store *Store) GetOffset(SessionId int64, StreamId int64) (*SSOffsetItem, error) {
@@ -75,12 +111,49 @@ func (store *Store) GetOffset(SessionId int64, StreamId int64) (*SSOffsetItem, e
 		return nil
 	})
 	if err != nil {
+		store.log.Warn(err)
 		return nil, errors.WithStack(err)
 	}
 	return ssOffsetItem, nil
 }
 
-var streamServerInfoItemBegin = &StreamServerInfoItem{}
+func (store *Store) DelOffset(sessionID int64, streamID int64) (*SSOffsetItem, error) {
+	var item mmdb.Item
+	err := store.db.Update(func(tx mmdb.Transaction) error {
+		item = tx.Delete(&SSOffsetItem{SessionId: sessionID, StreamId: streamID})
+		return nil
+	})
+	if err != nil {
+		store.log.Warn(err)
+		return nil, err
+	}
+	if item == nil {
+		return nil, nil
+	}
+	return item.(*SSOffsetItem), nil
+}
+
+func (store *Store) GetOffsets() ([]*SSOffsetItem, error) {
+	var items []*SSOffsetItem
+	err := store.db.View(func(tx mmdb.Transaction) error {
+		tx.AscendRange(&SSOffsetItem{SessionId: 0}, &SSOffsetItem{SessionId: math.MaxInt64}, func(item mmdb.Item) bool {
+			items = append(items, item.(*SSOffsetItem))
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		store.log.Warn(err)
+		return nil, err
+	}
+	return items, nil
+}
+
+var streamServerInfoItemBegin = &StreamServerInfoItem{
+	Base: &ServerInfoBase{
+		Id: 0,
+	},
+}
 var streamServerInfoItemEnd = &StreamServerInfoItem{Base: &ServerInfoBase{
 	Id: math.MaxUint32,
 }}
@@ -95,6 +168,7 @@ func (store *Store) ListStreamServer() ([]*StreamServerInfoItem, error) {
 		return nil
 	})
 	if err != nil {
+		store.log.Warn(err)
 		return nil, err
 	}
 	return streamServerInfoItems, nil
@@ -116,6 +190,7 @@ func (store *Store) AddStreamServer(item *StreamServerInfoItem) (*StreamServerIn
 		return nil
 	})
 	if err != nil {
+		store.log.Warn(err)
 		return nil, err
 	}
 	return item, nil
@@ -127,6 +202,7 @@ func (store *Store) DeleteStreamServer(item *StreamServerInfoItem) error {
 		return nil
 	})
 	if err != nil {
+		store.log.Warn(err)
 		return errors.WithStack(err)
 	}
 	return nil
@@ -143,6 +219,7 @@ func (store *Store) InsertStreamServerHeartbeatItem(item *StreamServerHeartbeatI
 		return nil
 	})
 	if err != nil {
+		store.log.Warn(err)
 		return err
 	}
 	if find == false {
