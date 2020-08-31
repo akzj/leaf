@@ -37,12 +37,12 @@ func OpenStore(options mmdb.Options, logger *logrus.Logger) *Store {
 	}
 }
 
-func (store *Store) CreateStream(name string) (*StreamInfoItem, error) {
+func (store *Store) CreateStream(name string) (item *StreamInfoItem, create bool, err error) {
 	store.metaDataItemLocker.Lock()
 	defer store.metaDataItemLocker.Unlock()
 	var exist = false
 	streamInfoItem := NewStreamInfoItem(0, name)
-	err := store.db.Update(func(tx mmdb.Transaction) error {
+	err = store.db.Update(func(tx mmdb.Transaction) error {
 		if tx.Get(streamInfoItem) != nil {
 			exist = true
 			return nil
@@ -64,12 +64,12 @@ func (store *Store) CreateStream(name string) (*StreamInfoItem, error) {
 	})
 	if err != nil {
 		store.log.Warn(err)
-		return nil, errors.WithStack(err)
+		return nil, false, errors.WithStack(err)
 	}
 	if exist {
-		return nil, errors.Errorf("stream name exist %s", name)
+		return streamInfoItem, false, nil
 	}
-	return streamInfoItem, nil
+	return streamInfoItem, true, nil
 }
 
 func (store *Store) GetStream(name string) (*StreamInfoItem, error) {
@@ -211,7 +211,7 @@ func (store *Store) DeleteStreamServer(item *StreamServerInfoItem) error {
 func (store *Store) InsertStreamServerHeartbeatItem(item *StreamServerHeartbeatItem) error {
 	var find = false
 	err := store.db.Update(func(tx mmdb.Transaction) error {
-		if tx.Get(&StreamServerInfoItem{Base: item.ServerInfoBase}) == nil {
+		if tx.Get(&StreamServerInfoItem{Base: item.Base}) == nil {
 			return nil
 		}
 		tx.ReplaceOrInsert(item)
@@ -223,7 +223,23 @@ func (store *Store) InsertStreamServerHeartbeatItem(item *StreamServerHeartbeatI
 		return err
 	}
 	if find == false {
-		err = errors.Errorf("no find stream server ID %d", item.ServerInfoBase.Id)
+		err = errors.Errorf("no find stream server ID %d", item.Base.Id)
 	}
 	return err
+}
+
+func (store *Store) GetStreamServerHeartbeatItem(ID uint32) (*StreamServerHeartbeatItem, error) {
+	var item mmdb.Item
+	err := store.db.View(func(tx mmdb.Transaction) error {
+		item = tx.Get(&StreamServerHeartbeatItem{Base: &ServerInfoBase{Id: ID}})
+		return nil
+	})
+	if err != nil {
+		store.log.Warning(err)
+		return nil, err
+	}
+	if item == nil {
+		return nil, nil
+	}
+	return item.(*StreamServerHeartbeatItem), nil
 }

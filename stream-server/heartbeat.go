@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func (server StreamServer) GetMetaServiceClient(ctx context.Context) proto.MetaServiceClient {
+func (server *StreamServer) GetMetaServiceClient(ctx context.Context) proto.MetaServiceClient {
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	conn, err := grpc.DialContext(ctx, server.Options.MetaServerAddr)
@@ -43,7 +43,7 @@ func (server *StreamServer) sendHeartbeat(client proto.MetaServiceClient) {
 		}
 		now := time.Now()
 		var heartbeatItem store.StreamServerHeartbeatItem
-		heartbeatItem.ServerInfoBase = server.ServerInfoBase
+		heartbeatItem.Base = server.ServerInfoBase
 		heartbeatItem.Timestamp = &timestamp.Timestamp{
 			Seconds: now.Unix(),
 			Nanos:   0,

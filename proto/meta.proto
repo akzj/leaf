@@ -38,6 +38,7 @@ message GetStreamInfoRequest {
 
 message GetStreamInfoResponse{
   StreamInfoItem Info = 1;
+  bool create = 2;
 }
 
 message SetStreamReadOffsetRequest{
@@ -60,9 +61,14 @@ service meta_service{
   rpc AddStreamServer(AddStreamServerRequest)returns (AddStreamServerResponse){}
   rpc ListStreamServer(google.protobuf.Empty)returns(ListStreamServerResponse){}
   rpc DeleteStreamServer(DeleteStreamServerRequest)returns(google.protobuf.Empty){}
+
   rpc StreamServerHeartbeat(stream StreamServerHeartbeatItem)returns(stream google.protobuf.Empty){}
+
+
   rpc CreateStream(CreateStreamRequest)returns(CreateStreamResponse){}
+  rpc GetOrCreateStream(GetStreamInfoRequest)returns(GetStreamInfoResponse){}
   rpc GetStreamInfo(GetStreamInfoRequest)returns(GetStreamInfoResponse){}
+
   rpc SetStreamReadOffset(SetStreamReadOffsetRequest)returns(google.protobuf.Empty){}
   rpc GetStreamReadOffset(GetStreamReadOffsetRequest)returns(GetStreamReadOffsetResponse){}
 }

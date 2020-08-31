@@ -2,14 +2,35 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"github.com/akzj/sstore"
 	"github.com/akzj/streamIO/proto"
+	"github.com/sirupsen/logrus"
 	"io"
 	"math"
 )
 
 type Store struct {
 	sstore *sstore.SStore
+	log    *logrus.Logger
+}
+
+type StreamStat struct {
+	StreamID int64
+	Begin    int64
+	End      int64
+}
+
+func OpenStore(path string, logger *logrus.Logger) (*Store, error) {
+	sstore, err := sstore.Open(sstore.DefaultOptions(path))
+	if err != nil {
+		logger.Warningf("sstore open %s failed %+v", path, err)
+		return nil, err
+	}
+	return &Store{
+		sstore: sstore,
+		log:    logger,
+	}, nil
 }
 
 func (store *Store) WriteRequest(request *proto.WriteStreamRequest, callback func(offset int64, err error)) {
@@ -66,4 +87,20 @@ func (store *Store) ReadRequest(ctx context.Context, request *proto.ReadStreamRe
 		}
 	}
 	return nil
+}
+
+func (store *Store) GetStreamStat(id int64) (*StreamStat, error) {
+	begin, exist := store.sstore.Begin(id)
+	if exist == false {
+		return nil, fmt.Errorf("streamID no exist")
+	}
+	end, exist := store.sstore.End(id)
+	if exist == false {
+		return nil, fmt.Errorf("streamID no exist")
+	}
+	return &StreamStat{
+		StreamID: id,
+		Begin:    begin,
+		End:      end,
+	}, nil
 }

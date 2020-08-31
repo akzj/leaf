@@ -33,7 +33,18 @@ message ReadStreamResponse{
 }
 
 
+message GetStreamStatRequest {
+  int64 streamID = 1;
+}
+
+message GetStreamStatResponse{
+  int64 streamID = 1;
+  int64 begin = 2;
+  int64 end = 3;
+}
+
 service stream_service{
   rpc WriteStream(stream WriteStreamRequest)returns(stream WriteStreamResponse){}
   rpc ReadStream(ReadStreamRequest)returns(stream ReadStreamResponse){}
+  rpc GetStreamStat(GetStreamStatRequest)returns(GetStreamStatResponse){}
 }

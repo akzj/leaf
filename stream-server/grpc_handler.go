@@ -1,6 +1,7 @@
 package stream_server
 
 import (
+	"context"
 	"github.com/akzj/sstore"
 	"github.com/akzj/streamIO/proto"
 	"google.golang.org/grpc/codes"
@@ -66,4 +67,15 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 		})
 	}
 	return requestError
+}
+
+func (server *StreamServer) GetStreamStat(ctx context.Context, request *proto.GetStreamStatRequest) (*proto.GetStreamStatResponse, error) {
+	stat, err := server.store.GetStreamStat(request.StreamID)
+	if err != nil {
+		server.log.Warningf("GetStreamStat(%d) failed %s", request.StreamID, err.Error())
+		return nil, status.Error(codes.NotFound, err.Error())
+	}
+	return &proto.GetStreamStatResponse{End: stat.End,
+		Begin:    stat.Begin,
+		StreamID: stat.StreamID}, nil
 }

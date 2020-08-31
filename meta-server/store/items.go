@@ -48,6 +48,16 @@ func UnmarshalItem(data []byte) (mmdb.Item, error) {
 	return item, nil
 }
 
+func MarshalItem(x Item) ([]byte, error) {
+	var buffers = make([]byte, 2)
+	binary.BigEndian.PutUint16(buffers, x.GetType())
+	if data, err := proto.Marshal(x.(proto.Message)); err != nil {
+		return nil, err
+	} else {
+		return append(buffers, data...), nil
+	}
+}
+
 func NewStreamInfoItem(ID int64, name string) *StreamInfoItem {
 	return &StreamInfoItem{
 		Name:     name,
@@ -63,12 +73,7 @@ func (x *StreamInfoItem) Less(other btree.Item) bool {
 }
 
 func (x *StreamInfoItem) MarshalBinary() (data []byte, err error) {
-	var buffers = make([]byte, 2)
-	binary.BigEndian.PutUint16(buffers, x.GetType())
-	if data, err = proto.Marshal(x); err != nil {
-		return nil, err
-	}
-	return append(buffers, data...), nil
+	return MarshalItem(x)
 }
 
 func (x *StreamInfoItem) UnmarshalBinary(data []byte) error {
@@ -91,12 +96,7 @@ func (x *MetaDataItem) Less(other btree.Item) bool {
 }
 
 func (x *MetaDataItem) MarshalBinary() (data []byte, err error) {
-	var buffers = make([]byte, 2)
-	binary.BigEndian.PutUint16(buffers, x.GetType())
-	if data, err = proto.Marshal(x); err != nil {
-		return nil, err
-	}
-	return append(buffers, data...), nil
+	return MarshalItem(x)
 }
 
 func (x *MetaDataItem) UnmarshalBinary(data []byte) error {
@@ -120,12 +120,7 @@ func (x *SSOffsetItem) Less(other btree.Item) bool {
 }
 
 func (x *SSOffsetItem) MarshalBinary() (data []byte, err error) {
-	var buffers = make([]byte, 2)
-	binary.BigEndian.PutUint16(buffers, x.GetType())
-	if data, err = proto.Marshal(x); err != nil {
-		return nil, err
-	}
-	return append(buffers, data...), nil
+	return MarshalItem(x)
 }
 
 func (x *SSOffsetItem) UnmarshalBinary(data []byte) error {
@@ -146,12 +141,7 @@ func (x *StreamServerInfoItem) Less(other btree.Item) bool {
 }
 
 func (x *StreamServerInfoItem) MarshalBinary() (data []byte, err error) {
-	var buffers = make([]byte, 2)
-	binary.BigEndian.PutUint16(buffers, x.GetType())
-	if data, err = proto.Marshal(x); err != nil {
-		return nil, err
-	}
-	return append(buffers, data...), nil
+	return MarshalItem(x)
 }
 
 func (x *StreamServerInfoItem) UnmarshalBinary(data []byte) error {
@@ -168,16 +158,11 @@ func (x *StreamServerHeartbeatItem) Less(other btree.Item) bool {
 	if x.GetType() != other.(Item).GetType() {
 		return x.GetType() < other.(Item).GetType()
 	}
-	return x.ServerInfoBase.Id < other.(*StreamServerHeartbeatItem).ServerInfoBase.Id
+	return x.Base.Id < other.(*StreamServerHeartbeatItem).Base.Id
 }
 
 func (x *StreamServerHeartbeatItem) MarshalBinary() (data []byte, err error) {
-	var buffers = make([]byte, 2)
-	binary.BigEndian.PutUint16(buffers, x.GetType())
-	if data, err = proto.Marshal(x); err != nil {
-		return nil, err
-	}
-	return append(buffers, data...), nil
+	return MarshalItem(x)
 }
 
 func (x *StreamServerHeartbeatItem) UnmarshalBinary(data []byte) error {

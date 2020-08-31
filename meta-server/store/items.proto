@@ -35,6 +35,6 @@ message MetaServerInfoItem {
 }
 
 message StreamServerHeartbeatItem{
-  ServerInfoBase ServerInfoBase = 1;
+  ServerInfoBase Base = 1;
   google.protobuf.Timestamp Timestamp = 2;
 }

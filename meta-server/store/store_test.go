@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"github.com/akzj/mmdb"
+	"github.com/golang/protobuf/ptypes/timestamp"
 	"github.com/sirupsen/logrus"
 	"os"
 	"strconv"
 	"testing"
+	"time"
 	"unsafe"
 )
 
@@ -151,7 +153,7 @@ func TestStore_CreateStream(t *testing.T) {
 	defer release()
 
 	for i := 0; i < 100; i++ {
-		streamInfoItem, err := store.CreateStream("hello" + strconv.Itoa(i))
+		streamInfoItem, _, err := store.CreateStream("hello" + strconv.Itoa(i))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -159,8 +161,40 @@ func TestStore_CreateStream(t *testing.T) {
 			t.Fatal(streamInfoItem)
 		}
 	}
-	if item, err := store.CreateStream("hello1"); err == nil {
-		t.Fatal(item)
+	if _, create, err := store.CreateStream("hello1"); err != nil {
+		t.Fatal(err)
+	} else if create {
+		t.Fatal("create must be false")
+	}
+}
+
+func TestInsertStreamServerHeartbeatItem(t *testing.T) {
+	store, release := openStore(t)
+	defer release()
+
+	if _, err := store.AddStreamServer(&StreamServerInfoItem{Base: &ServerInfoBase{Id: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	err := store.InsertStreamServerHeartbeatItem(&StreamServerHeartbeatItem{
+		Base: &ServerInfoBase{
+			Id:     1,
+			Leader: false,
+			Addr:   "127.0.0.1",
+		},
+		Timestamp: &timestamp.Timestamp{
+			Seconds: time.Now().Unix(),
+			Nanos:   0,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 
+	item, err := store.GetStreamServerHeartbeatItem(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item == nil {
+		t.Fatal("no find")
+	}
 }
