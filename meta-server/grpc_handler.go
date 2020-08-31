@@ -124,10 +124,13 @@ func (server *MetaServer) SetStreamReadOffset(ctx context.Context, request *prot
 }
 
 func (server *MetaServer) GetStreamReadOffset(ctx context.Context, request *proto.GetStreamReadOffsetRequest) (*proto.GetStreamReadOffsetResponse, error) {
-	ssOffsetItem, err := server.store.GetOffset(request.SessionId, request.StreamId)
+	offset, err := server.store.GetOffset(request.SessionId, request.StreamId)
 	if err != nil {
 		//todo log error
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	return &proto.GetStreamReadOffsetResponse{Offset: ssOffsetItem.Offset}, nil
+	if offset == nil {
+		return nil, status.Error(codes.NotFound, err.Error())
+	}
+	return &proto.GetStreamReadOffsetResponse{SSOffset: offset}, nil
 }

@@ -20,14 +20,11 @@ message WriteStreamResponse{
 
 message ReadStreamRequest {
   int64 stream_id = 1;
-  int64 request_id = 2;
   int64 offset = 3;
   int64 size = 4;
 }
 
 message ReadStreamResponse{
-  int64 stream_id = 1;
-  int64 request_id = 2;
   int64 offset = 3;
   bytes Data = 4;
 }

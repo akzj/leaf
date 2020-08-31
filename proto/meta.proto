@@ -16,6 +16,10 @@ message AddStreamServerRequest{
   StreamServerInfoItem stream_server_info_item = 1;
 }
 
+message GetStreamServerRequest{
+  int64 streamServerID = 1;
+}
+
 message AddStreamServerResponse{
   StreamServerInfoItem stream_server_info_item = 1;
 }
@@ -52,14 +56,14 @@ message GetStreamReadOffsetRequest{
 }
 
 message GetStreamReadOffsetResponse{
-  int64 offset = 1;
-  SSOffsetItem SSOffset = 2;
+  SSOffsetItem SSOffset = 1;
 }
 
 
 service meta_service{
   rpc AddStreamServer(AddStreamServerRequest)returns (AddStreamServerResponse){}
   rpc ListStreamServer(google.protobuf.Empty)returns(ListStreamServerResponse){}
+  rpc GetStreamServer(GetStreamServerRequest)returns(StreamServerInfoItem){}
   rpc DeleteStreamServer(DeleteStreamServerRequest)returns(google.protobuf.Empty){}
 
   rpc StreamServerHeartbeat(stream StreamServerHeartbeatItem)returns(stream google.protobuf.Empty){}

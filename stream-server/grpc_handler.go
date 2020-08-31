@@ -13,7 +13,10 @@ import (
 func (server *StreamServer) ReadStream(request *proto.ReadStreamRequest, stream proto.StreamService_ReadStreamServer) error {
 	for {
 		err := server.store.ReadRequest(stream.Context(), request, func(offset int64, data []byte) error {
-			if err := stream.Send(&proto.ReadStreamResponse{}); err != nil {
+			if err := stream.Send(&proto.ReadStreamResponse{
+				Offset:    offset,
+				Data:      data,
+			}); err != nil {
 				//todo log error
 				return err
 			}
