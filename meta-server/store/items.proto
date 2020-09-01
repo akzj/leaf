@@ -21,7 +21,7 @@ message SSOffsetItem{
 
 
 message ServerInfoBase{
-  uint32 id = 1;
+  int64 id = 1;
   bool leader = 2;
   string addr = 3;
 }

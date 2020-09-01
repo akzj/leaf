@@ -174,6 +174,24 @@ func (store *Store) ListStreamServer() ([]*StreamServerInfoItem, error) {
 	return streamServerInfoItems, nil
 }
 
+func (store *Store) GetStreamServerInfo(id int64) (*StreamServerInfoItem, error) {
+	var item mmdb.Item
+	err := store.db.View(func(tx mmdb.Transaction) error {
+		item = tx.Get(&StreamServerInfoItem{
+			Base: &ServerInfoBase{Id: id},
+		})
+		return nil
+	})
+	if err != nil {
+		store.log.Warning(err)
+		return nil, err
+	}
+	if item == nil {
+		return nil, nil
+	}
+	return item.(*StreamServerInfoItem), err
+}
+
 func (store *Store) AddStreamServer(item *StreamServerInfoItem) (*StreamServerInfoItem, error) {
 	err := store.db.Update(func(tx mmdb.Transaction) error {
 		var lastItem mmdb.Item

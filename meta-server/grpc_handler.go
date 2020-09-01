@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/akzj/mmdb"
+	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
 	"github.com/golang/protobuf/ptypes/empty"
 	"google.golang.org/grpc/codes"
@@ -13,7 +14,7 @@ import (
 )
 
 func (server *MetaServer) StreamServerHeartbeat(stream proto.MetaService_StreamServerHeartbeatServer) error {
-	var streamServerID uint32
+	var streamServerID int64
 	for {
 		item, err := stream.Recv()
 		if err == io.EOF {
@@ -62,6 +63,18 @@ func (server *MetaServer) ListStreamServer(ctx context.Context, empty *empty.Emp
 		return nil, status.Error(codes.NotFound, "no find streamServerInfoItems")
 	}
 	return &proto.ListStreamServerResponse{Items: streamServerInfoItems}, nil
+}
+
+func (server *MetaServer) GetStreamServer(ctx context.Context, request *proto.GetStreamServerRequest) (*store.StreamServerInfoItem, error) {
+	item, err := server.store.GetStreamServerInfo(request.StreamServerID)
+	if err != nil {
+		server.log.Warning(err.Error())
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	if item == nil {
+		return nil, status.Error(codes.NotFound, "no find streamServerId")
+	}
+	return item, nil
 }
 
 func (server *MetaServer) DeleteStreamServer(ctx context.Context, request *proto.DeleteStreamServerRequest) (*empty.Empty, error) {
