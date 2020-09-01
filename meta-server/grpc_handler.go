@@ -7,6 +7,7 @@ import (
 	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
 	"github.com/golang/protobuf/ptypes/empty"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"io"
@@ -22,7 +23,7 @@ func (server *MetaServer) StreamServerHeartbeat(stream proto.MetaService_StreamS
 			return nil
 		}
 		if err != nil {
-			server.log.WithError(err).Warningf("heartbeat stream server ID %d", streamServerID)
+			log.WithError(err).Warningf("heartbeat stream server ID %d", streamServerID)
 			return err
 		}
 		streamServerID = item.Base.Id
@@ -68,7 +69,7 @@ func (server *MetaServer) ListStreamServer(ctx context.Context, empty *empty.Emp
 func (server *MetaServer) GetStreamServer(ctx context.Context, request *proto.GetStreamServerRequest) (*store.StreamServerInfoItem, error) {
 	item, err := server.store.GetStreamServerInfo(request.StreamServerID)
 	if err != nil {
-		server.log.Warning(err.Error())
+		log.Warning(err.Error())
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	if item == nil {
