@@ -58,6 +58,14 @@ type setReadOffsetRequest struct {
 	cb    func(err error)
 }
 
+func NewMetaServiceClient(ctx context.Context, Addr string) (proto.MetaServiceClient, error) {
+	conn, err := grpc.DialContext(ctx, Addr)
+	if err != nil {
+		return nil, err
+	}
+	return proto.NewMetaServiceClient(conn), nil
+}
+
 func NewClient(sc proto.MetaServiceClient) Client {
 	var c = &client{
 		locker:                    sync.Mutex{},
