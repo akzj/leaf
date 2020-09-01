@@ -17,8 +17,8 @@ type MetaServer struct {
 }
 
 func initLog(options Options) {
-	_ = os.MkdirAll(filepath.Base(options.LogFile), 0777)
-	file, err := os.OpenFile(options.LogFile, os.O_APPEND|os.O_CREATE, 0666)
+	_ = os.MkdirAll(filepath.Dir(options.LogFile), 0777)
+	file, err := os.OpenFile(options.LogFile, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
 		panic(err.Error())
 	}
@@ -28,7 +28,8 @@ func initLog(options Options) {
 func NewMetaServer(options Options) *MetaServer {
 	initLog(options)
 	return &MetaServer{
-		store: store.OpenStore(options.MMdbOptions),
+		Options: options,
+		store:   store.OpenStore(options.MMdbOptions),
 	}
 }
 
@@ -40,6 +41,7 @@ func (server *MetaServer) Start() error {
 	}
 	s := grpc.NewServer()
 	proto.RegisterMetaServiceServer(s, server)
+	log.WithField("pid", os.Getpid()).Infof("meta-server bind %d", server.GRPCBind)
 	if err := s.Serve(listener); err != nil {
 		log.Error(err)
 		return err
