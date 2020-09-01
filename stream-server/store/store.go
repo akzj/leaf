@@ -39,12 +39,12 @@ func (store *Store) ReadRequest(ctx context.Context, request *proto.ReadStreamRe
 	callback func(offset int64, data []byte) error) error {
 	reader, err := store.sstore.Reader(request.StreamId)
 	if err != nil {
-		//todo log error
+		log.WithField("streamID", request.StreamId).Warn(err)
 		return err
 	}
 
 	if _, err := reader.Seek(request.Offset, io.SeekStart); err != nil {
-		//todo log error
+		log.WithField("Offset", request.Offset).Warn(err)
 		return err
 	}
 	if request.Size == 0 {

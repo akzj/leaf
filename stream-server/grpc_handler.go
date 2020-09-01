@@ -12,29 +12,27 @@ import (
 )
 
 func (server *StreamServer) ReadStream(request *proto.ReadStreamRequest, stream proto.StreamService_ReadStreamServer) error {
-	for {
-		err := server.store.ReadRequest(stream.Context(), request, func(offset int64, data []byte) error {
-			if err := stream.Send(&proto.ReadStreamResponse{
-				Offset: offset,
-				Data:   data,
-			}); err != nil {
-				//todo log error
-				return err
-			}
-			return nil
-		})
-		if err == nil {
-			return nil
-		}
-		//todo log error
-		if strings.Contains(err.Error(), sstore.ErrNoFindStream.Error()) {
-			return status.Errorf(codes.NotFound, err.Error())
-		}
-		if strings.Contains(err.Error(), sstore.ErrOffset.Error()) {
-			return status.Errorf(codes.FailedPrecondition, err.Error())
+	err := server.store.ReadRequest(stream.Context(), request, func(offset int64, data []byte) error {
+		if err := stream.Send(&proto.ReadStreamResponse{
+			Offset: offset,
+			Data:   data,
+		}); err != nil {
+			log.Error(err)
+			return err
 		}
 		return nil
+	})
+	if err == nil {
+		return nil
 	}
+	log.WithField("request", request).Warn(err)
+	if strings.Contains(err.Error(), sstore.ErrNoFindStream.Error()) {
+		return status.Errorf(codes.NotFound, err.Error())
+	}
+	if strings.Contains(err.Error(), sstore.ErrOffset.Error()) {
+		return status.Errorf(codes.FailedPrecondition, err.Error())
+	}
+	return nil
 }
 
 func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamServer) error {
@@ -42,22 +40,21 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 	for requestError == nil {
 		request, err := stream.Recv()
 		if err == io.EOF {
-			//todo log error
+			log.Warn(err)
 			return nil
 		}
 		if err != nil {
-			//todo log error
+			log.Warn(err)
 			return err
 		}
 		server.store.WriteRequest(request, func(offset int64, err error) {
 			if err != nil {
+				log.Warn(err)
 				if err == sstore.ErrOffset {
-					//todo log error
 					requestError = status.Error(codes.FailedPrecondition, err.Error())
 					return
 				}
 				err = status.Error(codes.ResourceExhausted, err.Error())
-				//todo log error
 				return
 			}
 			err = stream.Send(&proto.WriteStreamResponse{
@@ -65,7 +62,7 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 				RequestId: request.RequestId,
 			})
 			if err != nil {
-				//todo log error
+				log.Warn(err)
 				requestError = err
 			}
 		})

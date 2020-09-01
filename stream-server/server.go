@@ -2,7 +2,7 @@ package stream_server
 
 import (
 	"context"
-	metaServerStore "github.com/akzj/streamIO/meta-server/store"
+	MSStore "github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
 	"github.com/akzj/streamIO/stream-server/store"
 	log "github.com/sirupsen/logrus"
@@ -18,7 +18,7 @@ type StreamServer struct {
 	ctx            context.Context
 	cancelFunc     context.CancelFunc
 	wg             sync.WaitGroup
-	ServerInfoBase *metaServerStore.ServerInfoBase
+	ServerInfoBase *MSStore.ServerInfoBase
 	store          *store.Store
 	grpcServer     *grpc.Server
 }
@@ -40,7 +40,7 @@ func New(options Options) *StreamServer {
 
 func (server *StreamServer) init() error {
 	server.ctx, server.cancelFunc = context.WithCancel(context.Background())
-	server.ServerInfoBase = &metaServerStore.ServerInfoBase{
+	server.ServerInfoBase = &MSStore.ServerInfoBase{
 		Id:     server.Options.ServerID,
 		Leader: true,
 		Addr:   server.Options.GRPCBindAddr,

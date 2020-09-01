@@ -5,6 +5,7 @@ import (
 	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
 	"github.com/golang/protobuf/ptypes/timestamp"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"time"
 )
@@ -14,7 +15,7 @@ func (server *StreamServer) GetMetaServiceClient(ctx context.Context) proto.Meta
 	defer cancel()
 	conn, err := grpc.DialContext(ctx, server.Options.MetaServerAddr)
 	if err != nil {
-		//todo log error
+		log.Warn(err)
 		return nil
 	}
 	client := proto.NewMetaServiceClient(conn)
@@ -31,14 +32,14 @@ func (server *StreamServer) sendHeartbeat(client proto.MetaServiceClient) {
 	defer func() {
 		tick.Stop()
 		if err := stream.CloseSend(); err != nil {
-			//todo log error
+			log.Warn(err)
 		}
 	}()
 	for {
 		select {
 		case <-tick.C:
 		case <-server.ctx.Done():
-			//todo log error
+			log.Warn(err)
 			return
 		}
 		now := time.Now()
@@ -49,7 +50,7 @@ func (server *StreamServer) sendHeartbeat(client proto.MetaServiceClient) {
 			Nanos:   0,
 		}
 		if err := stream.Send(&heartbeatItem); err != nil {
-			//todo log error
+			log.Warn(err)
 		}
 	}
 }
@@ -61,7 +62,7 @@ func (server *StreamServer) heartbeatLoop() {
 			select {
 			case <-time.After(time.Second):
 			case <-server.ctx.Done():
-				//todo log error
+				log.Warn(server.ctx.Err())
 				return
 			}
 			continue
