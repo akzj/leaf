@@ -5,9 +5,11 @@ import (
 	metaServerStore "github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
 	"github.com/akzj/streamIO/stream-server/store"
-	"github.com/sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -18,12 +20,17 @@ type StreamServer struct {
 	wg             sync.WaitGroup
 	ServerInfoBase *metaServerStore.ServerInfoBase
 	store          *store.Store
-	log            *logrus.Logger
 	grpcServer     *grpc.Server
 }
 
+func New(options Options) *StreamServer {
+	_ = os.MkdirAll(filepath.Dir(options.LogPath), 0777)
+	file, err := os.OpenFile(options.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		log.Panic(err.Error())
+	}
+	log.SetOutput(file)
 
-func NewStreamServer(options Options) *StreamServer {
 	return &StreamServer{
 		Options:        options,
 		ServerInfoBase: nil,
@@ -32,7 +39,6 @@ func NewStreamServer(options Options) *StreamServer {
 }
 
 func (server *StreamServer) init() error {
-	server.log = logrus.New()
 	server.ctx, server.cancelFunc = context.WithCancel(context.Background())
 	server.ServerInfoBase = &metaServerStore.ServerInfoBase{
 		Id:     server.Options.ServerID,
@@ -40,7 +46,7 @@ func (server *StreamServer) init() error {
 		Addr:   server.Options.GRPCBindAddr,
 	}
 	var err error
-	server.store, err = store.OpenStore(server.Options.StorePath, server.log)
+	server.store, err = store.OpenStore(server.Options.SStorePath)
 	if err != nil {
 		return err
 	}
@@ -52,11 +58,11 @@ func (server *StreamServer) init() error {
 func (server *StreamServer) startGrpcServer() error {
 	listener, err := net.Listen("tcp", server.GRPCBindAddr)
 	if err != nil {
-		server.log.Error(err)
+		log.Error(err)
 		return err
 	}
 	if err := server.grpcServer.Serve(listener); err != nil {
-		server.log.Error(err)
+		log.Error(err)
 		return err
 	}
 	return nil

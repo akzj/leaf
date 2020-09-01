@@ -5,14 +5,13 @@ import (
 	"fmt"
 	"github.com/akzj/sstore"
 	"github.com/akzj/streamIO/proto"
-	"github.com/sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"io"
 	"math"
 )
 
 type Store struct {
 	sstore *sstore.SStore
-	log    *logrus.Logger
 }
 
 type StreamStat struct {
@@ -21,15 +20,14 @@ type StreamStat struct {
 	End      int64
 }
 
-func OpenStore(path string, logger *logrus.Logger) (*Store, error) {
+func OpenStore(path string) (*Store, error) {
 	sstore, err := sstore.Open(sstore.DefaultOptions(path))
 	if err != nil {
-		logger.Warningf("sstore open %s failed %+v", path, err)
+		log.Warningf("sstore open %s failed %+v", path, err)
 		return nil, err
 	}
 	return &Store{
 		sstore: sstore,
-		log:    logger,
 	}, nil
 }
 

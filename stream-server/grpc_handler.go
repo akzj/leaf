@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/akzj/sstore"
 	"github.com/akzj/streamIO/proto"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"io"
@@ -14,8 +15,8 @@ func (server *StreamServer) ReadStream(request *proto.ReadStreamRequest, stream 
 	for {
 		err := server.store.ReadRequest(stream.Context(), request, func(offset int64, data []byte) error {
 			if err := stream.Send(&proto.ReadStreamResponse{
-				Offset:    offset,
-				Data:      data,
+				Offset: offset,
+				Data:   data,
 			}); err != nil {
 				//todo log error
 				return err
@@ -75,7 +76,7 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 func (server *StreamServer) GetStreamStat(ctx context.Context, request *proto.GetStreamStatRequest) (*proto.GetStreamStatResponse, error) {
 	stat, err := server.store.GetStreamStat(request.StreamID)
 	if err != nil {
-		server.log.Warningf("GetStreamStat(%d) failed %s", request.StreamID, err.Error())
+		log.Warningf("GetStreamStat(%d) failed %s", request.StreamID, err.Error())
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
 	return &proto.GetStreamStatResponse{End: stat.End,
