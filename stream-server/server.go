@@ -29,7 +29,9 @@ func New(options Options) *StreamServer {
 	if err != nil {
 		log.Panic(err.Error())
 	}
+	log.SetReportCaller(true)
 	log.SetOutput(file)
+	log.SetLevel(options.LogLevel)
 
 	return &StreamServer{
 		Options:        options,

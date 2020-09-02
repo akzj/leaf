@@ -5,11 +5,12 @@ import (
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"math"
+	"sort"
 	"sync"
 )
 
 type Store struct {
-	db  mmdb.DB
+	db mmdb.DB
 
 	//protect for metadata
 	metaDataItemLocker sync.Mutex
@@ -31,7 +32,7 @@ func OpenStore(options mmdb.Options) *Store {
 		log.Panic(err)
 	}
 	return &Store{
-		db:  db,
+		db: db,
 	}
 }
 
@@ -40,6 +41,16 @@ func (store *Store) CreateStream(name string) (item *StreamInfoItem, create bool
 	defer store.metaDataItemLocker.Unlock()
 	var exist = false
 	streamInfoItem := NewStreamInfoItem(0, name)
+	heartbeatItems, err := store.ListStreamServerHeartbeat()
+	if err != nil {
+		return nil, false, err
+	}
+	if len(heartbeatItems) == 0 {
+		return nil, false, errors.New("no find stream server")
+	}
+	sort.Slice(heartbeatItems, func(i, j int) bool {
+		return heartbeatItems[i].Base.Id < heartbeatItems[j].Base.Id
+	})
 	err = store.db.Update(func(tx mmdb.Transaction) error {
 		if tx.Get(streamInfoItem) != nil {
 			exist = true
@@ -54,6 +65,8 @@ func (store *Store) CreateStream(name string) (item *StreamInfoItem, create bool
 			metaDataItem = item.(*MetaDataItem)
 		}
 		streamInfoItem.StreamId = metaDataItem.NextStreamId
+		streamInfoItem.StreamServerId =
+			heartbeatItems[streamInfoItem.StreamId%int64(len(heartbeatItems))].Base.Id
 		metaDataItem.NextStreamId++
 
 		tx.ReplaceOrInsert(streamInfoItem)
@@ -242,6 +255,21 @@ func (store *Store) InsertStreamServerHeartbeatItem(item *StreamServerHeartbeatI
 		err = errors.Errorf("no find stream server ID %d", item.Base.Id)
 	}
 	return err
+}
+
+func (store *Store) ListStreamServerHeartbeat() ([]*StreamServerHeartbeatItem, error) {
+	var items []*StreamServerHeartbeatItem
+	err := store.db.View(func(tx mmdb.Transaction) error {
+		tx.AscendRange(streamServerHeartbeatItemKeyMin, streamServerHeartbeatItemKeyMax, func(item mmdb.Item) bool {
+			items = append(items, item.(*StreamServerHeartbeatItem))
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func (store *Store) GetStreamServerHeartbeatItem(ID int64) (*StreamServerHeartbeatItem, error) {

@@ -28,6 +28,7 @@ func (server *MetaServer) StreamServerHeartbeat(stream proto.MetaService_StreamS
 		}
 		streamServerID = item.Base.Id
 		if err := server.store.InsertStreamServerHeartbeatItem(item); err != nil {
+			log.Error(err)
 			if strings.Contains(err.Error(), mmdb.ErrConflict.Error()) {
 				return status.Error(codes.Aborted, err.Error())
 			}
@@ -37,10 +38,11 @@ func (server *MetaServer) StreamServerHeartbeat(stream proto.MetaService_StreamS
 			log.Error(err)
 			return err
 		}
+		log.WithField("id", item.Base.Id).WithField("addr", item.Base.Addr).Info("heartbeat")
 	}
 }
 
-func (server *MetaServer) AddStreamServer(ctx context.Context, request *proto.AddStreamServerRequest) (*proto.AddStreamServerResponse, error) {
+func (server *MetaServer) AddStreamServer(_ context.Context, request *proto.AddStreamServerRequest) (*proto.AddStreamServerResponse, error) {
 	if request.StreamServerInfoItem.GetBase() == nil {
 		log.Error("request.StreamServerInfoItem nil")
 		return nil, status.Error(codes.InvalidArgument, "request.StreamServerInfoItem.Base nil error")
@@ -53,7 +55,7 @@ func (server *MetaServer) AddStreamServer(ctx context.Context, request *proto.Ad
 	return &proto.AddStreamServerResponse{StreamServerInfoItem: streamServerInfoItem}, nil
 }
 
-func (server *MetaServer) ListStreamServer(ctx context.Context, empty *empty.Empty) (*proto.ListStreamServerResponse, error) {
+func (server *MetaServer) ListStreamServer(_ context.Context, _ *empty.Empty) (*proto.ListStreamServerResponse, error) {
 	streamServerInfoItems, err := server.store.ListStreamServer()
 	if err != nil {
 		log.Error(err)
@@ -65,19 +67,19 @@ func (server *MetaServer) ListStreamServer(ctx context.Context, empty *empty.Emp
 	return &proto.ListStreamServerResponse{Items: streamServerInfoItems}, nil
 }
 
-func (server *MetaServer) GetStreamServer(ctx context.Context, request *proto.GetStreamServerRequest) (*store.StreamServerInfoItem, error) {
+func (server *MetaServer) GetStreamServer(_ context.Context, request *proto.GetStreamServerRequest) (*store.StreamServerInfoItem, error) {
 	item, err := server.store.GetStreamServerInfo(request.StreamServerID)
 	if err != nil {
 		log.Warning(err.Error())
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	if item == nil {
-		return nil, status.Error(codes.NotFound, "no find streamServerId")
+		return nil, status.Error(codes.NotFound, fmt.Sprintf("no find streamServerId %d", request.StreamServerID))
 	}
 	return item, nil
 }
 
-func (server *MetaServer) DeleteStreamServer(ctx context.Context, request *proto.DeleteStreamServerRequest) (*empty.Empty, error) {
+func (server *MetaServer) DeleteStreamServer(_ context.Context, request *proto.DeleteStreamServerRequest) (*empty.Empty, error) {
 	err := server.store.DeleteStreamServer(request.StreamServerInfoItem)
 	if err != nil {
 		log.Error(err)
@@ -86,7 +88,7 @@ func (server *MetaServer) DeleteStreamServer(ctx context.Context, request *proto
 	return &empty.Empty{}, nil
 }
 
-func (server *MetaServer) CreateStream(ctx context.Context, request *proto.CreateStreamRequest) (*proto.CreateStreamResponse, error) {
+func (server *MetaServer) CreateStream(_ context.Context, request *proto.CreateStreamRequest) (*proto.CreateStreamResponse, error) {
 	streamInfoItem, create, err := server.store.CreateStream(request.Name)
 	if err != nil {
 		log.Error(err)
@@ -100,7 +102,7 @@ func (server *MetaServer) CreateStream(ctx context.Context, request *proto.Creat
 	}, nil
 }
 
-func (server *MetaServer) GetOrCreateStream(ctx context.Context, request *proto.GetStreamInfoRequest) (*proto.GetStreamInfoResponse, error) {
+func (server *MetaServer) GetOrCreateStream(_ context.Context, request *proto.GetStreamInfoRequest) (*proto.GetStreamInfoResponse, error) {
 	streamInfoItem, create, err := server.store.CreateStream(request.Name)
 	if err != nil {
 		log.Error(err)
@@ -112,7 +114,7 @@ func (server *MetaServer) GetOrCreateStream(ctx context.Context, request *proto.
 	}, nil
 }
 
-func (server *MetaServer) GetStreamInfo(ctx context.Context, request *proto.GetStreamInfoRequest) (*proto.GetStreamInfoResponse, error) {
+func (server *MetaServer) GetStreamInfo(_ context.Context, request *proto.GetStreamInfoRequest) (*proto.GetStreamInfoResponse, error) {
 	streamInfoItem, err := server.store.GetStream(request.Name)
 	if err != nil {
 		log.Error(err)
@@ -124,7 +126,7 @@ func (server *MetaServer) GetStreamInfo(ctx context.Context, request *proto.GetS
 	return &proto.GetStreamInfoResponse{Info: streamInfoItem}, nil
 }
 
-func (server *MetaServer) SetStreamReadOffset(ctx context.Context, request *proto.SetStreamReadOffsetRequest) (*empty.Empty, error) {
+func (server *MetaServer) SetStreamReadOffset(_ context.Context, request *proto.SetStreamReadOffsetRequest) (*empty.Empty, error) {
 	if err := server.store.SetOffSet(request.SSOffsets); err != nil {
 		if strings.Contains(err.Error(), mmdb.ErrConflict.Error()) {
 			log.Error(err)
@@ -135,14 +137,16 @@ func (server *MetaServer) SetStreamReadOffset(ctx context.Context, request *prot
 	return &empty.Empty{}, nil
 }
 
-func (server *MetaServer) GetStreamReadOffset(ctx context.Context, request *proto.GetStreamReadOffsetRequest) (*proto.GetStreamReadOffsetResponse, error) {
+func (server *MetaServer) GetStreamReadOffset(_ context.Context, request *proto.GetStreamReadOffsetRequest) (*proto.GetStreamReadOffsetResponse, error) {
 	offset, err := server.store.GetOffset(request.SessionId, request.StreamId)
 	if err != nil {
 		log.Error(err)
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	if offset == nil {
-		return nil, status.Error(codes.NotFound, err.Error())
+		return nil, status.Error(codes.NotFound,
+			fmt.Sprintf("no find offset for streamID %d sessionID %d",
+				request.StreamId, request.SessionId))
 	}
 	return &proto.GetStreamReadOffsetResponse{SSOffset: offset}, nil
 }

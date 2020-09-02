@@ -42,7 +42,8 @@ func (store *Store) ReadRequest(ctx context.Context, request *proto.ReadStreamRe
 		log.WithField("streamID", request.StreamId).Warn(err)
 		return err
 	}
-
+	end, _ := store.sstore.End(request.StreamId)
+	log.WithField("end", end).Info("")
 	if _, err := reader.Seek(request.Offset, io.SeekStart); err != nil {
 		log.WithField("Offset", request.Offset).Warn(err)
 		return err
@@ -65,8 +66,9 @@ func (store *Store) ReadRequest(ctx context.Context, request *proto.ReadStreamRe
 		}
 		n, err := reader.Read(buffer[:size])
 		if err != nil {
+			log.WithField("n",n).Error(err)
 			if err == io.EOF {
-				if watcher != nil {
+				if watcher == nil {
 					watcher = store.sstore.Watcher(request.StreamId)
 				}
 				select {

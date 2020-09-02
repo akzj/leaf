@@ -7,6 +7,7 @@ import (
 	"github.com/google/btree"
 	"github.com/pkg/errors"
 	"io"
+	"math"
 )
 
 const (
@@ -153,6 +154,15 @@ func (x *StreamServerInfoItem) GetType() uint16 {
 }
 
 //StreamServerHeartbeatItem
+
+var (
+	streamServerHeartbeatItemKeyMin = &StreamServerHeartbeatItem{
+		Base: &ServerInfoBase{Id: 0},
+	}
+	streamServerHeartbeatItemKeyMax = &StreamServerHeartbeatItem{
+		Base: &ServerInfoBase{Id: math.MaxInt64},
+	}
+)
 
 func (x *StreamServerHeartbeatItem) Less(other btree.Item) bool {
 	if x.GetType() != other.(Item).GetType() {

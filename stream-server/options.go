@@ -1,6 +1,9 @@
 package stream_server
 
-import "time"
+import (
+	log "github.com/sirupsen/logrus"
+	"time"
+)
 
 type Options struct {
 	MetaServerAddr    string        `json:"meta_server_addr"`
@@ -8,6 +11,7 @@ type Options struct {
 	GRPCBindAddr      string        `json:"grpc_bind_addr"`
 	SStorePath        string        `json:"store_path"`
 	LogPath           string        `json:"log_path"`
+	LogLevel          log.Level     `json:"log_level"`
 	HeartbeatInterval time.Duration `json:"heartbeat_interval"`
 }
 
@@ -18,6 +22,7 @@ func DefaultOptions() Options {
 		GRPCBindAddr:      "127.0.0.1:7000",
 		SStorePath:        "sstore",
 		LogPath:           "log/stream-server.log",
+		LogLevel:          log.InfoLevel,
 		HeartbeatInterval: time.Second,
 	}
 }

@@ -15,7 +15,7 @@ type Options struct {
 func DefaultOptions() Options {
 	return Options{
 		LogFile:  "log/meta-server.log",
-		LogLevel: 0,
+		LogLevel: logrus.InfoLevel,
 		GRPCBind: 5000,
 		MMdbOptions: mmdb.DefaultOptions().
 			WithSyncWrite(false).

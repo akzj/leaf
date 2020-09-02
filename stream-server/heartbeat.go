@@ -13,7 +13,7 @@ import (
 func (server *StreamServer) GetMetaServiceClient(ctx context.Context) proto.MetaServiceClient {
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	conn, err := grpc.DialContext(ctx, server.Options.MetaServerAddr)
+	conn, err := grpc.DialContext(ctx, server.Options.MetaServerAddr, grpc.WithInsecure())
 	if err != nil {
 		log.Warn(err)
 		return nil
@@ -51,6 +51,11 @@ func (server *StreamServer) sendHeartbeat(client proto.MetaServiceClient) {
 		}
 		if err := stream.Send(&heartbeatItem); err != nil {
 			log.Warn(err)
+			return
+		}
+		if _, err := stream.Recv(); err != nil {
+			log.Error(err)
+			return
 		}
 	}
 }

@@ -12,6 +12,8 @@ import (
 )
 
 func (server *StreamServer) ReadStream(request *proto.ReadStreamRequest, stream proto.StreamService_ReadStreamServer) error {
+	log.WithField("request", request).Info("handle request")
+	var size int64
 	err := server.store.ReadRequest(stream.Context(), request, func(offset int64, data []byte) error {
 		if err := stream.Send(&proto.ReadStreamResponse{
 			Offset: offset,
@@ -20,9 +22,12 @@ func (server *StreamServer) ReadStream(request *proto.ReadStreamRequest, stream 
 			log.Error(err)
 			return err
 		}
+		size += int64(len(data))
+		log.WithField("offset", offset).WithField("size", size).WithField("data len", len(data)).Debug("response")
 		return nil
 	})
 	if err == nil {
+		log.WithField("request", request).Info("end")
 		return nil
 	}
 	log.WithField("request", request).Warn(err)
