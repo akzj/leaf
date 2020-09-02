@@ -4,8 +4,8 @@ go 1.13
 
 require (
 	github.com/akzj/block-queue v0.0.0-20200827035728-13cfec9cd1df
-	github.com/akzj/mmdb v0.1.0
-	github.com/akzj/sstore v0.1.1
+	github.com/akzj/mmdb v0.2.0
+	github.com/akzj/sstore v0.2.1
 	github.com/fatih/color v1.9.0
 	github.com/golang/protobuf v1.4.2
 	github.com/google/btree v1.0.0
@@ -19,10 +19,4 @@ require (
 	google.golang.org/genproto v0.0.0-20200827165113-ac2560b5e952 // indirect
 	google.golang.org/grpc v1.31.1
 	google.golang.org/protobuf v1.25.0
-	gopkg.in/yaml.v2 v2.2.8 // indirect
-)
-
-replace (
-	github.com/akzj/mmdb v0.1.0 => ../mmdb
-	github.com/akzj/sstore v0.1.1 => ../sstore
 )
