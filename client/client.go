@@ -7,6 +7,7 @@ import (
 	block_queue "github.com/akzj/block-queue"
 	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -176,7 +177,7 @@ func (c *client) NewStreamSession(ctx context.Context, sessionID int64, name str
 	}
 	return &session{
 		name:             name,
-		readBuffSize:     0,
+		readBuffSize:     1024,
 		ctx:              ctx,
 		sessionID:        sessionID,
 		streamID:         streamID,
@@ -196,7 +197,7 @@ func (c *client) getStreamClient(ctx context.Context, streamServerID int64) (pro
 	if err != nil {
 		return nil, err
 	}
-	conn, err := grpc.DialContext(ctx, response.Base.Addr)
+	conn, err := grpc.DialContext(ctx, response.Base.Addr, grpc.WithInsecure())
 	if err != nil {
 		return nil, err
 	}
@@ -227,10 +228,13 @@ func (s *session) NewReader() (ReadSeekCloser, error) {
 		return nil, err
 	}
 	return &streamReader{
-		readBuffSize: s.readBuffSize,
-		offset:       offset,
-		streamID:     streamID,
-		client:       streamClient,
+		readBuffSize:    s.readBuffSize,
+		offset:          offset,
+		streamID:        streamID,
+		rpcStreamReader: nil,
+		reader:          nil,
+		client:          streamClient,
+		ctx:             s.ctx,
 	}, nil
 }
 
@@ -369,7 +373,7 @@ func newRpcStreamReader(ctx context.Context,
 		notify:      make(chan interface{}, 1),
 		client:      client,
 		minToRead:   minToRead,
-		responses:   make(chan []byte, 1),
+		responses:   make(chan []byte, 100),
 	}
 	reader.ctx, reader.stop = context.WithCancel(ctx)
 	go reader.rpcRequestLoop()
@@ -380,6 +384,7 @@ func (r *rpcStreamReader) rpcRequestLoop() {
 	for {
 		toRead := atomic.LoadInt64(&r.bytesToRead)
 		if toRead < 0 {
+			fmt.Println("toRead", toRead)
 			select {
 			case <-r.notify:
 				continue
@@ -389,6 +394,8 @@ func (r *rpcStreamReader) rpcRequestLoop() {
 		}
 		if toRead < r.minToRead {
 			toRead = r.minToRead
+		} else if toRead > 1024*1024 {
+			toRead = 1024 * 1024
 		}
 		stream, err := r.client.ReadStream(r.ctx, &proto.ReadStreamRequest{
 			StreamId: r.streamID,
@@ -401,18 +408,20 @@ func (r *rpcStreamReader) rpcRequestLoop() {
 		for {
 			response, err := stream.Recv()
 			if err == io.EOF {
-				return
+				break
 			}
 			if err != nil {
-				return
+				log.Warn(err)
+				break
 			}
-			r.offset += int64(len(response.Data))
+			r.offset = response.Offset
 			atomic.AddInt64(&r.bytesToRead, -int64(len(response.Data)))
 			select {
 			case r.responses <- response.Data:
 			case <-r.ctx.Done():
 				//notify server close stream
 				_ = stream.CloseSend()
+				log.Warn(err)
 				return
 			}
 		}
