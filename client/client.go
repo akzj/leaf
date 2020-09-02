@@ -29,6 +29,7 @@ type StreamSession interface {
 
 type Client interface {
 	Close() error
+	AddStreamServer(ctx context.Context, StreamServerID int64, addr string) error
 	CreateStream(ctx context.Context, name string) (streamID int64, err error)
 	GetStreamID(ctx context.Context, name string) (streamID int64, err error)
 	GetOrCreateStream(ctx context.Context, name string) (streamID int64, err error)
@@ -59,7 +60,7 @@ type setReadOffsetRequest struct {
 }
 
 func NewMetaServiceClient(ctx context.Context, Addr string) (proto.MetaServiceClient, error) {
-	conn, err := grpc.DialContext(ctx, Addr)
+	conn, err := grpc.DialContext(ctx, Addr, grpc.WithInsecure())
 	if err != nil {
 		return nil, err
 	}
@@ -104,6 +105,21 @@ func (c *client) processSetReadOffsetRequestLoop() {
 			}
 		}
 	}
+}
+
+func (c *client) AddStreamServer(ctx context.Context, StreamServerID int64, addr string) error {
+	_, err := c.metaServerClient.AddStreamServer(ctx,
+		&proto.AddStreamServerRequest{StreamServerInfoItem:
+		&store.StreamServerInfoItem{Base:
+		&store.ServerInfoBase{
+			Id:     StreamServerID,
+			Leader: true,
+			Addr:   addr,
+		}}})
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *client) getMetaServiceClient() (proto.MetaServiceClient, error) {
