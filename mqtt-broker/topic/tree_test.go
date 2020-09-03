@@ -109,15 +109,43 @@ func TestClone(t *testing.T) {
 	})
 	clone := tree.Clone()
 	clone.Insert(newSub(10, "////1"))
-	fmt.Println(strings.Repeat("-",100))
+	fmt.Println(strings.Repeat("-", 100))
 	tree.Walk(func(path string, subscriber map[int64]Subscriber) bool {
 		fmt.Println(subMapIDs([]map[int64]Subscriber{subscriber}), path)
 		return true
 	})
 
-	fmt.Println(strings.Repeat("-",100))
+	fmt.Println(strings.Repeat("-", 100))
 	clone.Walk(func(path string, subscriber map[int64]Subscriber) bool {
 		fmt.Println(subMapIDs([]map[int64]Subscriber{subscriber}), path)
 		return true
 	})
+}
+
+func TestDelete(t *testing.T) {
+	tree := NewTree()
+
+	s1 := newSub(1, "1/2/3/4/5/6")
+	s2 := newSub(2, "1/2/3/4/5")
+	s3 := newSub(3, "1/2/3/4")
+	tree.Insert(s1)
+	tree.Insert(s2)
+	tree.Insert(s3)
+	clone := tree.Clone()
+
+	tree.Delete(s1)
+	if len(tree.root.next) == 0 {
+		t.Fatal("tree.root.next empty")
+	}
+	tree.Delete(s2)
+	if len(tree.root.next) == 0 {
+		t.Fatal("tree.root.next empty")
+	}
+	tree.Delete(s3)
+	if len(tree.root.next) != 0 {
+		t.Fatal("tree.root.next no empty")
+	}
+	if len(clone.root.next) == 0 {
+		t.Fatal("clone.root.next empty")
+	}
 }

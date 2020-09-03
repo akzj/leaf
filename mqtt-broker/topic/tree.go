@@ -129,6 +129,18 @@ func (n *Node) walk(f func(path string, subscribers map[int64]Subscriber) bool) 
 	return true
 }
 
+func (n *Node) mutableNext(token string) *Node {
+	next, ok := n.next[token]
+	if ok == false {
+		return nil
+	}
+	if next.CoW != n.CoW {
+		next = n.CoW.mutableNode(next)
+		n.next[token] = next
+	}
+	return next
+}
+
 type Tree struct {
 	cow  *copyOnWrite
 	root *Node
@@ -173,4 +185,42 @@ func (tree *Tree) Clone() *Tree {
 
 func (tree *Tree) Walk(f func(path string, subscriber map[int64]Subscriber) bool) {
 	tree.root.walk(f)
+}
+
+type nodeStack []*Node
+
+func (stack *nodeStack) Push(node *Node) {
+	*stack = append(*stack, node)
+}
+
+func (stack *nodeStack) Pop() *Node {
+	if len(*stack) == 0 {
+		return nil
+	}
+	node := (*stack)[len(*stack)-1]
+	*stack = (*stack)[:len(*stack)-1]
+	return node
+}
+
+func (tree *Tree) Delete(subscriber Subscriber) {
+	tree.root = tree.cow.mutableNode(tree.root)
+	next := tree.root
+	var stack = new(nodeStack)
+	stack.Push(next)
+	for token, remain := nextToken(subscriber.Topic()); len(token) != 0 || len(remain) != 0; token, remain = nextToken(remain) {
+		if next = next.mutableNext(token); next == nil {
+			return
+		}
+		stack.Push(next)
+	}
+	delete(next.subscribers, subscriber.ID())
+	preNode := next
+	stack.Pop()
+	for node := stack.Pop(); node != nil; node = stack.Pop() {
+		if len(preNode.subscribers) > 0 {
+			return
+		}
+		delete(node.next, preNode.token)
+		preNode = node
+	}
 }
