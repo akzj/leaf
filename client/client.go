@@ -1,24 +1,28 @@
 package client
 
 import (
-	"bufio"
 	"context"
-	"fmt"
 	block_queue "github.com/akzj/block-queue"
 	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
-	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"io"
 	"sync"
-	"sync/atomic"
 )
+
+const minWriteSize = 4 * 1024
 
 type ReadSeekCloser interface {
 	io.ReadSeeker
 	io.Closer
+}
+
+type StreamWriter interface {
+	io.WriteCloser
+	Flush() error
+	WriteWithCb(data []byte, callback func(err error))
 }
 
 type StreamSession interface {
@@ -38,20 +42,14 @@ type Client interface {
 }
 
 type client struct {
-	locker                    sync.Mutex
+	streamServiceClientLocker sync.Mutex
 	metaServerClient          proto.MetaServiceClient
 	streamServiceClient       map[int64]proto.StreamServiceClient
-	setReadOffsetRequestQueue *block_queue.Queue
-}
 
-type session struct {
-	name             string
-	readBuffSize     int64
-	ctx              context.Context
-	sessionID        int64
-	streamID         int64
-	client           *client
-	metaServerClient proto.MetaServiceClient
+	setReadOffsetRequestQueue *block_queue.Queue
+
+	streamRequestWritersLocker sync.Mutex
+	streamRequestWriters       map[int64]*streamRequestWriter
 }
 
 type setReadOffsetRequest struct {
@@ -70,7 +68,7 @@ func NewMetaServiceClient(ctx context.Context, Addr string) (proto.MetaServiceCl
 
 func NewClient(sc proto.MetaServiceClient) Client {
 	var c = &client{
-		locker:                    sync.Mutex{},
+		streamServiceClientLocker: sync.Mutex{},
 		metaServerClient:          sc,
 		streamServiceClient:       make(map[int64]proto.StreamServiceClient),
 		setReadOffsetRequestQueue: block_queue.NewQueue(10240),
@@ -81,6 +79,20 @@ func NewClient(sc proto.MetaServiceClient) Client {
 
 func (c *client) putSetReadOffsetRequest(request setReadOffsetRequest) {
 	c.setReadOffsetRequestQueue.Push(request)
+}
+
+func (c *client) startStreamRequestWriter(streamServerID int64,
+	streamServiceClient proto.StreamServiceClient) *block_queue.Queue {
+	c.streamRequestWritersLocker.Lock()
+	defer c.streamRequestWritersLocker.Unlock()
+
+	writer, ok := c.streamRequestWriters[streamServerID]
+	if ok == false {
+		writer = newWriteStreamRequest(context.Background(), streamServiceClient)
+		c.streamRequestWriters[streamServerID] = writer
+		go writer.writeLoop()
+	}
+	return writer.queue
 }
 
 func (c *client) processSetReadOffsetRequestLoop() {
@@ -187,8 +199,8 @@ func (c *client) NewStreamSession(ctx context.Context, sessionID int64, name str
 }
 
 func (c *client) getStreamClient(ctx context.Context, streamServerID int64) (proto.StreamServiceClient, error) {
-	c.locker.Lock()
-	defer c.locker.Unlock()
+	c.streamServiceClientLocker.Lock()
+	defer c.streamServiceClientLocker.Unlock()
 	if client, ok := c.streamServiceClient[streamServerID]; ok {
 		return client, nil
 	}
@@ -208,6 +220,16 @@ func (c *client) getStreamClient(ctx context.Context, streamServerID int64) (pro
 
 func (c *client) Close() error {
 	return nil
+}
+
+type session struct {
+	name             string
+	readBuffSize     int64
+	ctx              context.Context
+	sessionID        int64
+	streamID         int64
+	client           *client
+	metaServerClient proto.MetaServiceClient
 }
 
 func (s *session) NewReader() (ReadSeekCloser, error) {
@@ -247,14 +269,11 @@ func (s *session) NewWriter() (io.WriteCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithCancel(s.ctx)
+	queue := s.client.startStreamRequestWriter(response.Info.StreamServerId,
+		streamServiceClient)
 	return &streamWriter{
-		streamID:  response.Info.StreamId,
-		ctx:       ctx,
-		stop:      cancel,
-		client:    streamServiceClient,
-		offset:    -1,
-		requestID: 0,
+		streamID: response.Info.StreamId,
+		queue:    queue,
 	}, nil
 }
 
@@ -286,222 +305,4 @@ func (s *session) GetReadOffset() (offset int64, err error) {
 		return 0, err
 	}
 	return response.SSOffset.Offset, nil
-}
-
-type streamReader struct {
-	readBuffSize    int64
-	offset          int64
-	streamID        int64
-	rpcStreamReader *rpcStreamReader
-	reader          *bufio.Reader
-	client          proto.StreamServiceClient
-	ctx             context.Context
-}
-
-func (s *streamReader) Seek(offset int64, whence int) (int64, error) {
-	stat, err := s.client.GetStreamStat(s.ctx, &proto.GetStreamStatRequest{StreamID: s.streamID})
-	if err != nil {
-		return 0, err
-	}
-	switch whence {
-	case io.SeekStart:
-	case io.SeekCurrent:
-		offset += s.offset
-	case io.SeekEnd:
-		offset += stat.End
-	}
-	if offset > stat.End || offset < stat.Begin {
-		return 0, fmt.Errorf("offset out of stream range [%d,%d]", stat.Begin, stat.End)
-	}
-	if s.offset != offset {
-		s.reset()
-	}
-	s.offset = offset
-	return s.offset, nil
-}
-
-func (s *streamReader) reset() {
-	_ = s.rpcStreamReader.Close()
-	s.rpcStreamReader = nil
-}
-
-func (s *streamReader) getBufReader() *bufio.Reader {
-	if s.reader != nil {
-		return s.reader
-	}
-	if s.rpcStreamReader != nil {
-		_ = s.rpcStreamReader.Close()
-	}
-	s.rpcStreamReader = newRpcStreamReader(s.ctx, s.streamID,
-		s.offset, s.readBuffSize, s.client)
-	s.reader = bufio.NewReader(s.rpcStreamReader)
-	return s.reader
-}
-
-func (s *streamReader) Read(p []byte) (n int, err error) {
-	return s.getBufReader().Read(p)
-}
-
-func (s *streamReader) Close() error {
-	s.reset()
-	return nil
-}
-
-type rpcStreamReader struct {
-	streamID    int64
-	offset      int64
-	bytesToRead int64
-	notify      chan interface{}
-	ctx         context.Context
-	stop        context.CancelFunc
-	client      proto.StreamServiceClient
-	responses   chan []byte
-	minToRead   int64
-
-	readBuffer []byte
-}
-
-func newRpcStreamReader(ctx context.Context,
-	streamID int64,
-	offset int64,
-	minToRead int64,
-	client proto.StreamServiceClient) *rpcStreamReader {
-	reader := &rpcStreamReader{
-		streamID:    streamID,
-		offset:      offset,
-		bytesToRead: 0,
-		notify:      make(chan interface{}, 1),
-		client:      client,
-		minToRead:   minToRead,
-		responses:   make(chan []byte, 100),
-	}
-	reader.ctx, reader.stop = context.WithCancel(ctx)
-	go reader.rpcRequestLoop()
-	return reader
-}
-
-func (r *rpcStreamReader) rpcRequestLoop() {
-	for {
-		toRead := atomic.LoadInt64(&r.bytesToRead)
-		if toRead < 0 {
-			fmt.Println("toRead", toRead)
-			select {
-			case <-r.notify:
-				continue
-			case <-r.ctx.Done():
-				return
-			}
-		}
-		if toRead < r.minToRead {
-			toRead = r.minToRead
-		} else if toRead > 1024*1024 {
-			toRead = 1024 * 1024
-		}
-		stream, err := r.client.ReadStream(r.ctx, &proto.ReadStreamRequest{
-			StreamId: r.streamID,
-			Offset:   r.offset,
-			Size:     toRead,
-		})
-		if err != nil {
-			return
-		}
-		for {
-			response, err := stream.Recv()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				log.Warn(err)
-				break
-			}
-			r.offset = response.Offset
-			atomic.AddInt64(&r.bytesToRead, -int64(len(response.Data)))
-			select {
-			case r.responses <- response.Data:
-			case <-r.ctx.Done():
-				//notify server close stream
-				_ = stream.CloseSend()
-				log.Warn(err)
-				return
-			}
-		}
-	}
-}
-
-func (r *rpcStreamReader) Read(p []byte) (n int, err error) {
-	var size int
-	atomic.AddInt64(&r.bytesToRead, int64(len(p)))
-	select {
-	case <-r.notify:
-	default:
-	}
-	for len(p) > 0 {
-		if r.readBuffer != nil {
-			n := copy(p, r.readBuffer)
-			size += n
-			p = p[n:]
-			r.readBuffer = r.readBuffer[n:]
-			if len(r.readBuffer) == 0 {
-				r.readBuffer = nil
-			}
-		} else {
-			if size > 0 {
-				return size, nil
-			}
-			select {
-			case r.readBuffer = <-r.responses:
-				continue
-			case <-r.ctx.Done():
-				return size, r.ctx.Err()
-			}
-		}
-	}
-	return size, nil
-}
-
-func (r *rpcStreamReader) Close() error {
-	r.stop()
-	return nil
-}
-
-type streamWriter struct {
-	streamID      int64
-	ctx           context.Context
-	stop          context.CancelFunc
-	client        proto.StreamServiceClient
-	offset        int64
-	requestSender proto.StreamService_WriteStreamClient
-	requestID     int64
-}
-
-func (s *streamWriter) Write(p []byte) (n int, err error) {
-	if s.requestSender == nil {
-		var err error
-		s.requestSender, err = s.client.WriteStream(s.ctx)
-		if err != nil {
-			return 0, err
-		}
-	}
-	err = s.requestSender.Send(&proto.WriteStreamRequest{
-		StreamId:  s.streamID,
-		Offset:    s.offset,
-		Data:      p,
-		RequestId: atomic.AddInt64(&s.requestID, 1),
-	})
-	if err != nil {
-		return 0, err
-	}
-	response, err := s.requestSender.Recv()
-	if err != nil {
-		return 0, err
-	}
-	s.offset = response.Offset
-	return len(p), nil
-}
-
-func (s *streamWriter) Close() error {
-	if s.requestSender != nil {
-		return s.requestSender.CloseSend()
-	}
-	return nil
 }

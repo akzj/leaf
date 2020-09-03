@@ -1,6 +1,7 @@
-package topic
+package mqtt_broker
 
 import (
+	"github.com/eclipse/paho.mqtt.golang/packets"
 	"sort"
 	"strings"
 )
@@ -8,6 +9,7 @@ import (
 type Subscriber interface {
 	ID() int64
 	Topic() string
+	writePacket(packet *packets.PublishPacket, callback func(err error))
 }
 
 type copyOnWrite struct {
@@ -27,6 +29,7 @@ func (CoW *copyOnWrite) mutableNode(node *Node) *Node {
 	}
 	clone.CoW = CoW
 	clone.path = node.path
+	clone.retain = node.retain
 	return clone
 }
 
@@ -36,6 +39,7 @@ type Node struct {
 	path        string
 	next        map[string]*Node
 	subscribers map[int64]Subscriber
+	retain      *packets.PublishPacket
 }
 
 func newNode(token string) *Node {
@@ -46,10 +50,9 @@ func newNode(token string) *Node {
 	}
 }
 
-func (n *Node) insert(level int, token string, remain string, path string, sub Subscriber) {
+func (n *Node) getOrCreateNode(level int, token string, remain string, path string) *Node {
 	if token == "" && remain == "" {
-		n.subscribers[sub.ID()] = sub
-		return
+		return n
 	}
 	if level > 0 {
 		path = path + "/" + token
@@ -69,7 +72,7 @@ func (n *Node) insert(level int, token string, remain string, path string, sub S
 		}
 	}
 	token, remain = nextToken(remain)
-	next.insert(level+1, token, remain, path, sub)
+	return next.getOrCreateNode(level+1, token, remain, path)
 }
 
 func (n *Node) match(token string, remain string) []map[int64]Subscriber {
@@ -166,9 +169,20 @@ func NewTree() *Tree {
 
 func (tree *Tree) Insert(sub Subscriber) {
 	token, remain := nextToken(sub.Topic())
-	node := tree.cow.mutableNode(tree.root)
-	node.insert(0, token, remain, "", sub)
-	tree.root = node
+	tree.root = tree.cow.mutableNode(tree.root)
+	tree.root.getOrCreateNode(0, token, remain, "").
+		subscribers[sub.ID()] = sub
+}
+
+func (tree *Tree) UpdateRetainPacket(packet *packets.PublishPacket) {
+	token, remain := nextToken(packet.TopicName)
+	tree.root = tree.cow.mutableNode(tree.root)
+	node := tree.root.getOrCreateNode(0, token, remain, "")
+	if len(packet.Payload) == 0 {
+		node.retain = nil
+	} else {
+		node.retain = packet
+	}
 }
 
 func (tree *Tree) Match(topic string) []map[int64]Subscriber {

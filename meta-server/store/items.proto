@@ -38,3 +38,11 @@ message StreamServerHeartbeatItem{
   ServerInfoBase Base = 1;
   google.protobuf.Timestamp Timestamp = 2;
 }
+
+
+message MQTTSession {
+  int64  stream_id = 1;
+  int64  session_id = 4;
+  string client_identifier = 2;
+  map<string, int32> topics = 3;
+}
