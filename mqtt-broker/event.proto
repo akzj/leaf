@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package mqtt_broker;
+
+option go_package = "github.com/akzj/streamIO/mqtt-broker;mqtt_broker";
+
+message Event {
+  bytes data = 1;
+  enum Type {
+    SubscribeEvent = 0;
+    UnSubscribeEvent = 1;
+    RetainMessage = 2;
+  }
+  Type type = 2 ;
+}
+
+message SubscribeEvent{
+  int64 stream_id = 1;
+  int64 session_id = 2;
+  int64 stream_server_id = 3;
+  repeated  string  topic = 4;
+  int64 offset = 5;
+}
+
+message UnSubscribeEvent{
+  int64 stream_id = 1;
+  int64 session_id = 2;
+  int64 stream_server_id = 3;
+  repeated  string topic = 4;
+  int64 offset = 5;
+}
+
+message RetainMessage {
+  bytes data = 1;
+  int64 offset = 5;
+}

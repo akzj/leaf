@@ -39,6 +39,7 @@ type Client interface {
 	GetStreamID(ctx context.Context, name string) (streamID int64, err error)
 	GetOrCreateStream(ctx context.Context, name string) (streamID int64, err error)
 	NewStreamSession(ctx context.Context, sessionID int64, name string) (StreamSession, error)
+	NewStreamWriter(ctx context.Context,streamID int64, streamServerID int64) (StreamWriter, error)
 }
 
 type client struct {
@@ -50,6 +51,18 @@ type client struct {
 
 	streamRequestWritersLocker sync.Mutex
 	streamRequestWriters       map[int64]*streamRequestWriter
+}
+
+func (c *client) NewStreamWriter(ctx context.Context, streamID int64, streamServerID int64) (StreamWriter, error) {
+	streamServiceClient, err := c.getStreamClient(ctx, streamServerID)
+	if err != nil {
+		return nil, err
+	}
+	queue := c.startStreamRequestWriter(streamServerID, streamServiceClient)
+	return &streamWriter{
+		streamID: streamID,
+		queue:    queue,
+	}, nil
 }
 
 type setReadOffsetRequest struct {

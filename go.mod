@@ -6,7 +6,7 @@ require (
 	github.com/akzj/block-queue v0.0.0-20200827035728-13cfec9cd1df
 	github.com/akzj/mmdb v0.2.0
 	github.com/akzj/sstore v0.2.1
-	github.com/eclipse/paho.mqtt.golang v1.2.0 // indirect
+	github.com/eclipse/paho.mqtt.golang v1.2.0
 	github.com/fatih/color v1.9.0
 	github.com/golang/protobuf v1.4.2
 	github.com/google/btree v1.0.0

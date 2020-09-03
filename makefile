@@ -27,4 +27,5 @@ build-meta-server:
 
 generate:
 	@cd .. && protoc --go_out=plugins=grpc:. streamIO/proto/*.proto &&\
-protoc --go_out=plugins=grpc:. streamIO/meta-server/store/*proto && cd -
+protoc --go_out=plugins=grpc:. streamIO/meta-server/store/*proto && \
+protoc --go_out=plugins=grpc:. streamIO/mqtt-broker/*.proto && cd -

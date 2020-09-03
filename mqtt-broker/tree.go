@@ -108,6 +108,20 @@ func (n *Node) match(token string, remain string) []map[int64]Subscriber {
 	return subMaps
 }
 
+func (n *Node) rangeRetainMessage(f func(packet *packets.PublishPacket) bool) bool {
+	if n.retain != nil {
+		if f(n.retain) == false {
+			return false
+		}
+	}
+	for _, next := range n.next {
+		if next.rangeRetainMessage(f) == false {
+			return false
+		}
+	}
+	return true
+}
+
 func (n *Node) walk(f func(path string, subscribers map[int64]Subscriber) bool) bool {
 	if len(n.subscribers) != 0 {
 		if f(n.path, n.subscribers) == false {
@@ -197,8 +211,11 @@ func (tree *Tree) Clone() *Tree {
 	return clone
 }
 
-func (tree *Tree) Walk(f func(path string, subscriber map[int64]Subscriber) bool) {
+func (tree *Tree) Walk(f func(path string, subscribers map[int64]Subscriber) bool) {
 	tree.root.walk(f)
+}
+func (tree *Tree) RangeRetainMessage(f func(packet *packets.PublishPacket) bool) {
+	tree.root.rangeRetainMessage(f)
 }
 
 type nodeStack []*Node
