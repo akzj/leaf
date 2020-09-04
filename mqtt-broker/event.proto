@@ -18,7 +18,7 @@ message SubscribeEvent{
   int64 stream_id = 1;
   int64 session_id = 2;
   int64 stream_server_id = 3;
-  repeated  string  topic = 4;
+  map<string, int32> topic = 4;
   int64 offset = 5;
 }
 
@@ -26,7 +26,7 @@ message UnSubscribeEvent{
   int64 stream_id = 1;
   int64 session_id = 2;
   int64 stream_server_id = 3;
-  repeated  string topic = 4;
+  repeated  string  topic = 4;
   int64 offset = 5;
 }
 

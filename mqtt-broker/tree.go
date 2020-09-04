@@ -9,6 +9,7 @@ import (
 type Subscriber interface {
 	ID() int64
 	Topic() string
+	Qos() int32
 	writePacket(packet *packets.PublishPacket, callback func(err error))
 }
 

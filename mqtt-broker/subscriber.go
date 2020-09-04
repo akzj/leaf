@@ -10,7 +10,12 @@ type subscriber struct {
 	streamWriter   client.StreamWriter
 	streamID       int64
 	streamServerID int64
+	qos            int32
 	topic          string
+}
+
+func (s *subscriber) Qos() int32 {
+	return s.qos
 }
 
 func (s *subscriber) ID() int64 {

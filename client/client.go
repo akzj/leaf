@@ -5,6 +5,7 @@ import (
 	block_queue "github.com/akzj/block-queue"
 	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -14,9 +15,10 @@ import (
 
 const minWriteSize = 4 * 1024
 
-type ReadSeekCloser interface {
+type StreamReader interface {
 	io.ReadSeeker
 	io.Closer
+	Offset() int64
 }
 
 type StreamWriter interface {
@@ -26,20 +28,30 @@ type StreamWriter interface {
 }
 
 type StreamSession interface {
-	NewReader() (ReadSeekCloser, error)
-	NewWriter() (io.WriteCloser, error)
+	NewReader() (StreamReader, error)
+	NewWriter() (StreamWriter, error)
 	SetReadOffset(offset int64) error
 	GetReadOffset() (offset int64, err error)
 }
 
 type Client interface {
 	Close() error
+	//streamServer
 	AddStreamServer(ctx context.Context, StreamServerID int64, addr string) error
+
+	//stream
 	CreateStream(ctx context.Context, name string) (streamID int64, err error)
 	GetStreamID(ctx context.Context, name string) (streamID int64, err error)
 	GetOrCreateStream(ctx context.Context, name string) (streamID int64, err error)
+
+	//session
 	NewStreamSession(ctx context.Context, sessionID int64, name string) (StreamSession, error)
-	NewStreamWriter(ctx context.Context,streamID int64, streamServerID int64) (StreamWriter, error)
+	NewStreamWriter(ctx context.Context, streamID int64, streamServerID int64) (StreamWriter, error)
+
+	//MQTT
+	GetOrCreateMQTTSession(ctx context.Context, clientIdentifier string) (*store.MQTTSessionItem, bool, error)
+	UpdateMQTTClientSession(ctx context.Context, clientIdentifier string, Unsubscribe []string, subscribe map[string]int32) error
+	DeleteMQTTClientSession(ctx context.Context, clientIdentifier string) (*store.MQTTSessionItem, error)
 }
 
 type client struct {
@@ -56,6 +68,7 @@ type client struct {
 func (c *client) NewStreamWriter(ctx context.Context, streamID int64, streamServerID int64) (StreamWriter, error) {
 	streamServiceClient, err := c.getStreamClient(ctx, streamServerID)
 	if err != nil {
+		log.Error(err)
 		return nil, err
 	}
 	queue := c.startStreamRequestWriter(streamServerID, streamServiceClient)
@@ -74,6 +87,7 @@ type setReadOffsetRequest struct {
 func NewMetaServiceClient(ctx context.Context, Addr string) (proto.MetaServiceClient, error) {
 	conn, err := grpc.DialContext(ctx, Addr, grpc.WithInsecure())
 	if err != nil {
+		log.Error(err)
 		return nil, err
 	}
 	return proto.NewMetaServiceClient(conn), nil
@@ -143,6 +157,7 @@ func (c *client) AddStreamServer(ctx context.Context, StreamServerID int64, addr
 			Addr:   addr,
 		}}})
 	if err != nil {
+		log.Error(err)
 		return err
 	}
 	return nil
@@ -153,38 +168,91 @@ func (c *client) getMetaServiceClient() (proto.MetaServiceClient, error) {
 }
 
 func (c *client) CreateStream(ctx context.Context, name string) (streamID int64, err error) {
-	msClient, err := c.getMetaServiceClient()
+	metaServiceClient, err := c.getMetaServiceClient()
 	if err != nil {
+		log.Error(err)
 		return 0, err
 	}
 
-	response, err := msClient.CreateStream(ctx, &proto.CreateStreamRequest{Name: name})
+	response, err := metaServiceClient.CreateStream(ctx, &proto.CreateStreamRequest{Name: name})
 	if err != nil {
+		log.Error(err)
 		return 0, err
 	}
 	return response.Info.StreamId, nil
 }
 
 func (c *client) GetStreamID(ctx context.Context, name string) (streamID int64, err error) {
-	msClient, err := c.getMetaServiceClient()
+	metaServiceClient, err := c.getMetaServiceClient()
 	if err != nil {
 		return 0, err
 	}
 
-	response, err := msClient.CreateStream(ctx, &proto.CreateStreamRequest{Name: name})
+	response, err := metaServiceClient.CreateStream(ctx, &proto.CreateStreamRequest{Name: name})
 	if err != nil {
 		return 0, err
 	}
 	return response.Info.StreamId, nil
 }
 
+func (c *client) GetOrCreateMQTTSession(ctx context.Context, clientIdentifier string) (*store.MQTTSessionItem, bool, error) {
+	metaServiceClient, err := c.getMetaServiceClient()
+	if err != nil {
+		log.Error(err)
+		return nil, false, err
+	}
+	req := &proto.GetOrCreateMQTTClientSessionRequest{ClientIdentifier: clientIdentifier}
+	response, err := metaServiceClient.GetOrCreateMQTTClientSession(ctx, req)
+	if err != nil {
+		return nil, false, err
+	}
+	return response.SessionItem, response.Create, nil
+}
+
+func (c *client) UpdateMQTTClientSession(ctx context.Context,
+	clientIdentifier string,
+	Unsubscribe []string,
+	subscribe map[string]int32) error {
+
+	metaServiceClient, err := c.getMetaServiceClient()
+	if err != nil {
+		log.Error(err)
+		return err
+	}
+	_, err = metaServiceClient.UpdateMQTTClientSession(ctx, &proto.UpdateMQTTClientSessionRequest{
+		ClientIdentifier: clientIdentifier,
+		Subscribe:        subscribe,
+		UnSubscribe:      Unsubscribe,
+	})
+	if err != nil {
+		log.Error(err)
+		return err
+	}
+	return nil
+}
+
+func (c *client) DeleteMQTTClientSession(ctx context.Context, clientIdentifier string) (*store.MQTTSessionItem, error) {
+	metaServiceClient, err := c.getMetaServiceClient()
+	if err != nil {
+		log.Error(err)
+		return nil, err
+	}
+	response, err := metaServiceClient.DeleteMQTTClientSession(ctx,
+		&proto.DeleteMQTTClientSessionRequest{ClientIdentifier: clientIdentifier})
+	if err != nil {
+		log.Error(err.Error())
+		return nil, err
+	}
+	return response.SessionItem, nil
+}
+
 func (c *client) GetOrCreateStream(ctx context.Context, name string) (streamID int64, err error) {
-	msClient, err := c.getMetaServiceClient()
+	metaServiceClient, err := c.getMetaServiceClient()
 	if err != nil {
 		return 0, err
 	}
 
-	response, err := msClient.GetOrCreateStream(ctx, &proto.GetStreamInfoRequest{Name: name})
+	response, err := metaServiceClient.GetOrCreateStream(ctx, &proto.GetStreamInfoRequest{Name: name})
 	if err != nil {
 		return 0, err
 	}
@@ -196,7 +264,7 @@ func (c *client) NewStreamSession(ctx context.Context, sessionID int64, name str
 	if err != nil {
 		return nil, err
 	}
-	msClient, err := c.getMetaServiceClient()
+	metaServiceClient, err := c.getMetaServiceClient()
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +275,7 @@ func (c *client) NewStreamSession(ctx context.Context, sessionID int64, name str
 		sessionID:        sessionID,
 		streamID:         streamID,
 		client:           c,
-		metaServerClient: msClient,
+		metaServerClient: metaServiceClient,
 	}, nil
 }
 
@@ -245,7 +313,7 @@ type session struct {
 	metaServerClient proto.MetaServiceClient
 }
 
-func (s *session) NewReader() (ReadSeekCloser, error) {
+func (s *session) NewReader() (StreamReader, error) {
 	response, err := s.metaServerClient.GetStreamInfo(s.ctx, &proto.GetStreamInfoRequest{Name: s.name})
 	if err != nil {
 		return nil, err
@@ -270,10 +338,11 @@ func (s *session) NewReader() (ReadSeekCloser, error) {
 		reader:          nil,
 		client:          streamClient,
 		ctx:             s.ctx,
+		session:         s,
 	}, nil
 }
 
-func (s *session) NewWriter() (io.WriteCloser, error) {
+func (s *session) NewWriter() (StreamWriter, error) {
 	response, err := s.metaServerClient.GetStreamInfo(s.ctx, &proto.GetStreamInfoRequest{Name: s.name})
 	if err != nil {
 		return nil, err

@@ -1,6 +1,7 @@
-#mqtt
+#mqtt-broker
 
-mqtt is mqtt server
+mqtt-broker is mqtt server
+* support Qos0,QoS1
 
 
  

@@ -150,3 +150,38 @@ func (server *MetaServer) GetStreamReadOffset(_ context.Context, request *proto.
 	}
 	return &proto.GetStreamReadOffsetResponse{SSOffset: offset}, nil
 }
+
+func (server *MetaServer) GetOrCreateMQTTClientSession(ctx context.Context,
+	request *proto.GetOrCreateMQTTClientSessionRequest) (*proto.GetOrCreateMQTTClientSessionResponse, error) {
+	item, create, err := server.store.GetOrCreateMQTTSession(request.ClientIdentifier)
+	if err != nil {
+		log.Error(err)
+		return nil, err
+	}
+
+	return &proto.GetOrCreateMQTTClientSessionResponse{
+		SessionItem: item,
+		Create:      create,
+	}, nil
+}
+
+func (server *MetaServer) DeleteMQTTClientSession(ctx context.Context, request *proto.DeleteMQTTClientSessionRequest) (*proto.DeleteMQTTClientSessionResponse, error) {
+	item, err := server.store.DeleteMQTTClientSession(request.ClientIdentifier)
+	if err != nil {
+		log.Error(err.Error())
+		return nil, err
+	}
+	return &proto.DeleteMQTTClientSessionResponse{
+		SessionItem: item,
+	}, nil
+}
+
+func (server *MetaServer) UpdateMQTTClientSession(ctx context.Context, request *proto.UpdateMQTTClientSessionRequest) (*empty.Empty, error) {
+	if err := server.store.UpdateMQTTClientSession(request.ClientIdentifier,
+		request.UnSubscribe,
+		request.Subscribe); err != nil {
+		log.Error(err)
+		return nil, err
+	}
+	return &empty.Empty{}, nil
+}

@@ -112,6 +112,10 @@ func writeStream(metaServer string, streamName string, data string, count int64)
 		size += n
 		hash.Write([]byte(buffer))
 	}
+	if err := writer.Flush(); err != nil {
+		log.Error(err)
+		return nil
+	}
 	fmt.Printf("write stream [%s] count [%d]  size [%d] md5[%x]\n", streamName, count, size, hash.Sum(nil))
 	return nil
 }
@@ -160,6 +164,10 @@ func readStream(metaServer string, streamName string, size int64) error {
 		hash.Write(data)
 		//fmt.Print(string(data))
 		toRead -= int64(n)
+	}
+	if err := session.SetReadOffset(reader.Offset()); err != nil {
+		log.Error(err.Error())
+		return nil
 	}
 	fmt.Printf("read stream [%s] size [%d] md5[%x]\n", streamName, size, hash.Sum(nil))
 	return nil

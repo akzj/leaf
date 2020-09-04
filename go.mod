@@ -10,6 +10,7 @@ require (
 	github.com/fatih/color v1.9.0
 	github.com/golang/protobuf v1.4.2
 	github.com/google/btree v1.0.0
+	github.com/google/uuid v1.1.2
 	github.com/pkg/errors v0.9.1
 	github.com/rodaine/table v1.0.1
 	github.com/sirupsen/logrus v1.6.0

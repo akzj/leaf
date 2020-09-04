@@ -40,9 +40,10 @@ message StreamServerHeartbeatItem{
 }
 
 
-message MQTTSession {
+message MQTTSessionItem {
   int64  stream_id = 1;
-  int64  session_id = 4;
+  int64 session_id = 5;
+  int64  stream_server_id = 4;
   string client_identifier = 2;
   map<string, int32> topics = 3;
 }

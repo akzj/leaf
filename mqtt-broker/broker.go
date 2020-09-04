@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	block_queue "github.com/akzj/block-queue"
 	"github.com/akzj/streamIO/client"
+	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/eclipse/paho.mqtt.golang/packets"
 	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
@@ -17,7 +18,6 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"time"
 	"unsafe"
 )
 
@@ -30,13 +30,15 @@ type Broker struct {
 
 	tree unsafe.Pointer
 
-	EventWatcher *EventWatcher
+	EventWatcher *EventReader
 	eventQueue   *block_queue.Queue
 
 	client          client.Client
 	eventOffset     int64
 	treeApplyEvents int64
 	isCheckpoint    int32
+
+	eventWriter client.StreamWriter
 }
 
 func (broker *Broker) Start() {
@@ -78,15 +80,26 @@ func (broker *Broker) newListener() ([]net.Listener, error) {
 }
 
 func (broker *Broker) deleteSession(identifier string) error {
-	//1 todo get mqtt client session from meta-server
-	//2 reset message offset from stream-server
-	//3 delete client session from meta-server
-	//4 delete subscribe,and pub `unsubscribe-event` to mqtt-event-queue
-	return nil
-}
+	//1 delete client session from meta-server
+	info, err := broker.client.DeleteMQTTClientSession(context.Background(), identifier)
+	if err != nil {
+		log.Error(err.Error())
+		return err
+	}
+	if info == nil {
+		return nil
+	}
 
-func (broker *Broker) getOrCreateSession(identifier string) (*session, error) {
-	return nil, nil
+	//2 delete subscribe,and pub `unsubscribe-event` to mqtt-event-queue
+	packet := &packets.UnsubscribePacket{}
+	for topic := range info.Topics {
+		packet.Topics = append(packet.Topics, topic)
+	}
+	if err := broker.handleUnSubscribePacket(info, packet); err != nil {
+		log.Error(err.Error())
+		return err
+	}
+	return nil
 }
 
 func (broker *Broker) handleConnection(conn net.Conn) {
@@ -131,7 +144,6 @@ func (broker *Broker) handleConnection(conn net.Conn) {
 		return
 	}
 	//process session
-	var sess *session
 	if connectPacket.CleanSession {
 		if err := broker.deleteSession(connectPacket.ClientIdentifier); err != nil {
 			connackPacket.ReturnCode = packets.ErrRefusedServerUnavailable
@@ -145,42 +157,23 @@ func (broker *Broker) handleConnection(conn net.Conn) {
 			}
 		}()
 	}
-	sess, err = broker.getOrCreateSession(connectPacket.ClientIdentifier)
+	if connectPacket.Keepalive == 0 {
+		connectPacket.Keepalive = broker.DefaultKeepalive
+	}
+	sess, err := newSession(broker, connectPacket.Keepalive, conn, broker.client, connectPacket.ClientIdentifier)
 	if err != nil {
+		log.Error(err.Error())
 		connackPacket.ReturnCode = packets.ErrRefusedServerUnavailable
 		connackPacket.Write(conn)
 		logEntry.Error(err)
 		return
 	}
-	connackPacket.SessionPresent = !sess.create
-	sess.broker = broker
-	sess.conn = conn
-	sess.keepalive = connectPacket.Keepalive
-	if sess.keepalive == 0 {
-		sess.keepalive = broker.DefaultKeepalive
+	connackPacket.SessionPresent = sess.create
+	if err := connackPacket.Write(conn); err != nil {
+		return
 	}
-	broker.sessReadLoop(sess)
-}
-
-func (broker *Broker) sessReadLoop(sess *session) {
-	logEntry := log.WithField("remoteAddr", sess.conn.RemoteAddr().String())
-	logEntry = logEntry.WithField("ClientIdentifier", sess.base.ClientIdentifier)
-	for {
-		keepalive := time.Duration(sess.keepalive) * time.Second
-		if err := sess.conn.SetReadDeadline(time.Now().Add(keepalive + keepalive/2)); err != nil {
-			logEntry.Errorf("SetReadDeadline failed %s", err.Error())
-			return
-		}
-		packet, err := packets.ReadPacket(sess.conn)
-		if err != nil {
-			logEntry.Errorf("packets.ReadPacket failed %s", err.Error())
-			return
-		}
-		if err := sess.handlePacket(packet); err != nil {
-			packets.NewControlPacket(packets.Disconnect).Write(sess.conn)
-			return
-		}
-	}
+	go sess.readStreamLoop()
+	sess.readConnLoop()
 }
 
 func (broker *Broker) serve(listener net.Listener) {
@@ -218,11 +211,12 @@ func (broker *Broker) newSubscriber(event *SubscribeEvent) ([]Subscriber, error)
 		return nil, err
 	}
 	var subscribers []Subscriber
-	for _, topic := range event.Topic {
+	for topic, qos := range event.Topic {
 		subscribers = append(subscribers, &subscriber{
 			streamWriter:   writer,
 			streamID:       event.StreamId,
 			streamServerID: event.StreamServerId,
+			qos:            qos,
 			topic:          topic,
 		})
 	}
@@ -313,9 +307,9 @@ func (broker *Broker) checkpoint(clone *Tree, offset int64) error {
 			sub := iter.(*subscriber)
 			var subEvent = &SubscribeEvent{
 				StreamId:       sub.streamID,
-				SessionId:      sub.streamServerID,
-				StreamServerId: 0,
-				Topic:          []string{sub.topic},
+				SessionId:      sub.streamID,
+				StreamServerId: sub.streamServerID,
+				Topic:          map[string]int32{iter.Topic(): iter.Qos()},
 				Offset:         offset,
 			}
 			data, err = proto.Marshal(subEvent)
@@ -366,4 +360,50 @@ func (broker *Broker) checkpoint(clone *Tree, offset int64) error {
 		return err
 	}
 	return nil
+}
+
+func (broker *Broker) handleUnSubscribePacket(MqttSessionItem *store.MQTTSessionItem, packet *packets.UnsubscribePacket) error {
+	event := UnSubscribeEvent{
+		StreamId:       MqttSessionItem.StreamId,
+		SessionId:      MqttSessionItem.SessionId,
+		StreamServerId: MqttSessionItem.StreamId,
+		Topic:          packet.Topics,
+	}
+	data, err := proto.Marshal(&event)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	wg.Wait()
+	broker.eventWriter.WriteWithCb(data, func(e error) {
+		wg.Done()
+		err = e
+	})
+	wg.Wait()
+	return err
+}
+
+func (broker *Broker) handleSubscribePacket(MqttSessionItem *store.MQTTSessionItem, packet *packets.SubscribePacket) error {
+	event := SubscribeEvent{
+		StreamId:       MqttSessionItem.StreamId,
+		SessionId:      MqttSessionItem.SessionId,
+		StreamServerId: MqttSessionItem.StreamId,
+		Topic:          map[string]int32{},
+	}
+	for index, topic := range packet.Topics {
+		qos := packet.Qoss[index]
+		event.Topic[topic] = int32(qos)
+	}
+	data, err := proto.Marshal(&event)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	wg.Wait()
+	broker.eventWriter.WriteWithCb(data, func(e error) {
+		wg.Done()
+		err = e
+	})
+	wg.Wait()
+	return err
 }

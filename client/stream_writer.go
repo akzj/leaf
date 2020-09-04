@@ -84,6 +84,7 @@ func (writer *streamRequestWriter) Close() error {
 }
 
 type streamWriter struct {
+	locker   sync.Mutex
 	streamID int64
 	buffer   bytes.Buffer
 	queue    *block_queue.Queue
@@ -99,8 +100,10 @@ func (s *streamWriter) WriteWithCb(data []byte, callback func(err error)) {
 }
 
 func (s *streamWriter) Write(data []byte) (n int, err error) {
+	s.locker.Lock()
+	defer s.locker.Unlock()
 	if s.buffer.Len()+len(data) >= minWriteSize {
-		if err := s.Flush(); err != nil {
+		if err := s.flushWithoutLock(); err != nil {
 			return 0, err
 		}
 	}
@@ -112,6 +115,12 @@ func (s *streamWriter) Close() error {
 }
 
 func (s *streamWriter) Flush() error {
+	s.locker.Lock()
+	defer s.locker.Unlock()
+	return s.flushWithoutLock()
+}
+
+func (s *streamWriter) flushWithoutLock() error {
 	var err error
 	if s.buffer.Len() > 0 {
 		var wg sync.WaitGroup

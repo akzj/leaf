@@ -16,6 +16,7 @@ const (
 	SSOffsetItemType
 	StreamServerInfoItemType
 	StreamServerHeartbeatItemType
+	MQTTSessionItemType
 )
 
 type Item interface {
@@ -181,4 +182,38 @@ func (x *StreamServerHeartbeatItem) UnmarshalBinary(data []byte) error {
 
 func (x *StreamServerHeartbeatItem) GetType() uint16 {
 	return StreamServerHeartbeatItemType
+}
+
+//MQTTSessionItem
+
+func (x *MQTTSessionItem) Less(other btree.Item) bool {
+	if x.GetType() != other.(Item).GetType() {
+		return x.GetType() < other.(Item).GetType()
+	}
+	return x.ClientIdentifier < other.(*MQTTSessionItem).ClientIdentifier
+}
+
+func (x *MQTTSessionItem) MarshalBinary() (data []byte, err error) {
+	return MarshalItem(x)
+}
+
+func (x *MQTTSessionItem) UnmarshalBinary(data []byte) error {
+	return proto.Unmarshal(data, x)
+}
+
+func (x *MQTTSessionItem) GetType() uint16 {
+	return MQTTSessionItemType
+}
+
+func (x *MQTTSessionItem) Clone() *MQTTSessionItem {
+	clone := new(MQTTSessionItem)
+	clone.StreamId = x.StreamId
+	clone.SessionId = x.SessionId
+	clone.StreamServerId = x.StreamServerId
+	clone.ClientIdentifier = x.ClientIdentifier
+	clone.Topics = map[string]int32{}
+	for topic, qos := range x.Topics {
+		clone.Topics[topic] = qos
+	}
+	return clone
 }

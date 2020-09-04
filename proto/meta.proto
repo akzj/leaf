@@ -59,6 +59,28 @@ message GetStreamReadOffsetResponse{
   SSOffsetItem SSOffset = 1;
 }
 
+message GetOrCreateMQTTClientSessionRequest{
+  string client_identifier = 2;
+}
+
+message GetOrCreateMQTTClientSessionResponse{
+  MQTTSessionItem sessionItem = 1;
+  bool Create = 2;
+}
+
+message DeleteMQTTClientSessionRequest{
+  string client_identifier = 1;
+}
+
+message DeleteMQTTClientSessionResponse{
+  MQTTSessionItem sessionItem = 1;
+}
+
+message UpdateMQTTClientSessionRequest{
+  string client_identifier = 1;
+  map<string, int32> subscribe = 2;
+  repeated string unSubscribe = 3;
+}
 
 service meta_service{
   rpc AddStreamServer(AddStreamServerRequest)returns (AddStreamServerResponse){}
@@ -75,4 +97,9 @@ service meta_service{
 
   rpc SetStreamReadOffset(SetStreamReadOffsetRequest)returns(google.protobuf.Empty){}
   rpc GetStreamReadOffset(GetStreamReadOffsetRequest)returns(GetStreamReadOffsetResponse){}
+
+  //mqtt
+  rpc GetOrCreateMQTTClientSession(GetOrCreateMQTTClientSessionRequest)returns(GetOrCreateMQTTClientSessionResponse){}
+  rpc DeleteMQTTClientSession(DeleteMQTTClientSessionRequest)returns(DeleteMQTTClientSessionResponse){}
+  rpc UpdateMQTTClientSession(UpdateMQTTClientSessionRequest)returns(google.protobuf.Empty){}
 }

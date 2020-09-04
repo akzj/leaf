@@ -1,7 +1,9 @@
 package store
 
 import (
+	"fmt"
 	"github.com/akzj/mmdb"
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"math"
@@ -286,4 +288,81 @@ func (store *Store) GetStreamServerHeartbeatItem(ID int64) (*StreamServerHeartbe
 		return nil, nil
 	}
 	return item.(*StreamServerHeartbeatItem), nil
+}
+
+func (store *Store) GetOrCreateMQTTSession(identifier string) (*MQTTSessionItem, bool, error) {
+	var item mmdb.Item
+	var create bool
+	err := store.db.Update(func(tx mmdb.Transaction) error {
+		item = tx.Get(&MQTTSessionItem{ClientIdentifier: identifier})
+		if item == nil {
+			create = true
+			var streamID int64
+			var streamServerID int64
+			for retry := 0; retry < 10; retry++ {
+				id := uuid.New().String()
+				info, create, err := store.CreateStream(id)
+				if err != nil {
+					log.Error(err)
+					return err
+				}
+				if create == false {
+					log.Warnf("create stream %s exist ....", id)
+					continue
+				}
+				streamID = info.StreamId
+				streamServerID = info.StreamServerId
+				break
+			}
+			item = &MQTTSessionItem{
+				SessionId:        streamID,
+				StreamId:         streamID,
+				StreamServerId:   streamServerID,
+				ClientIdentifier: identifier,
+				Topics:           nil,
+			}
+			tx.ReplaceOrInsert(item)
+		}
+		return nil
+	})
+	if err != nil {
+		log.Warn(err)
+		return nil, false, err
+	}
+	return item.(*MQTTSessionItem), create, nil
+}
+
+func (store *Store) DeleteMQTTClientSession(identifier string) (*MQTTSessionItem, error) {
+	var item mmdb.Item
+	err := store.db.Update(func(tx mmdb.Transaction) error {
+		item = tx.Delete(&MQTTSessionItem{ClientIdentifier: identifier})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, nil
+	}
+	return item.(*MQTTSessionItem), nil
+}
+
+func (store *Store) UpdateMQTTClientSession(ClientIdentifier string,
+	UnSubscribe []string, Subscribe map[string]int32) error {
+	return store.db.Update(func(tx mmdb.Transaction) error {
+		item := tx.Get(&MQTTSessionItem{ClientIdentifier: ClientIdentifier})
+		if item == nil {
+			return fmt.Errorf("no find mqtt client session with %s",
+				ClientIdentifier)
+		}
+		session := item.(*MQTTSessionItem).Clone()
+		for _, topic := range UnSubscribe {
+			delete(session.Topics, topic)
+		}
+		for topic, qos := range Subscribe {
+			session.Topics[topic] = qos
+		}
+		tx.ReplaceOrInsert(session)
+		return nil
+	})
 }

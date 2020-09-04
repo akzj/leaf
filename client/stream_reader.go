@@ -18,6 +18,11 @@ type streamReader struct {
 	reader          *bufio.Reader
 	client          proto.StreamServiceClient
 	ctx             context.Context
+	session         *session
+}
+
+func (s *streamReader) Offset() int64 {
+	return s.offset
 }
 
 func (s *streamReader) Seek(offset int64, whence int) (int64, error) {
@@ -61,7 +66,9 @@ func (s *streamReader) getBufReader() *bufio.Reader {
 }
 
 func (s *streamReader) Read(p []byte) (n int, err error) {
-	return s.getBufReader().Read(p)
+	n, err = s.getBufReader().Read(p)
+	s.offset += int64(n)
+	return n, err
 }
 
 func (s *streamReader) Close() error {
@@ -104,9 +111,14 @@ func newRpcStreamReader(ctx context.Context,
 
 func (r *rpcStreamReader) rpcRequestLoop() {
 	for {
-		toRead := atomic.LoadInt64(&r.bytesToRead)
-		if toRead < 0 {
-			fmt.Println("toRead", toRead)
+		select {
+		case <-r.ctx.Done():
+			log.Error(r.ctx.Err())
+			return
+		default:
+		}
+		size := atomic.LoadInt64(&r.bytesToRead)
+		if size < 0 {
 			select {
 			case <-r.notify:
 				continue
@@ -114,17 +126,18 @@ func (r *rpcStreamReader) rpcRequestLoop() {
 				return
 			}
 		}
-		if toRead < r.minToRead {
-			toRead = r.minToRead
-		} else if toRead > 1024*1024 {
-			toRead = 1024 * 1024
+		if size < r.minToRead {
+			size = r.minToRead
+		} else if size > 1024*1024 {
+			size = 1024 * 1024
 		}
 		stream, err := r.client.ReadStream(r.ctx, &proto.ReadStreamRequest{
 			StreamId: r.streamID,
 			Offset:   r.offset,
-			Size:     toRead,
+			Size:     size,
 		})
 		if err != nil {
+			log.Error(err)
 			return
 		}
 		for {
@@ -152,10 +165,11 @@ func (r *rpcStreamReader) rpcRequestLoop() {
 
 func (r *rpcStreamReader) Read(p []byte) (n int, err error) {
 	var size int
-	atomic.AddInt64(&r.bytesToRead, int64(len(p)))
-	select {
-	case <-r.notify:
-	default:
+	if atomic.AddInt64(&r.bytesToRead, int64(len(p))) > 0 {
+		select {
+		case <-r.notify:
+		default:
+		}
 	}
 	for len(p) > 0 {
 		if r.readBuffer != nil {

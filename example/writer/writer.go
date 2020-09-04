@@ -42,5 +42,8 @@ func main() {
 	if err != nil {
 		panic(err.Error())
 	}
+	if err := writer.Flush(); err != nil {
+		panic(err.Error())
+	}
 	fmt.Println(n)
 }

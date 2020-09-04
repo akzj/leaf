@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/akzj/mmdb"
 	"github.com/golang/protobuf/ptypes/timestamp"
-	"github.com/sirupsen/logrus"
 	"os"
 	"strconv"
 	"testing"
@@ -14,8 +13,7 @@ import (
 )
 
 func openStore(t *testing.T) (*Store, func()) {
-	logger := logrus.New()
-	store := OpenStore(mmdb.DefaultOptions(), logger)
+	store := OpenStore(mmdb.DefaultOptions())
 	if store == nil {
 		t.Fatalf("OpenStore failed")
 	}

@@ -14,7 +14,7 @@ import (
 const MQTTEventStream = "$streamIO$mqtt-event"
 const MaxEventSize = 1024 * 64
 
-type EventWatcher struct {
+type EventReader struct {
 	sessionID     int64 //serverID
 	session       client.StreamSession
 	client        client.Client
@@ -22,13 +22,13 @@ type EventWatcher struct {
 	eventCallback func(message proto.Message)
 }
 
-func newEventWatcher(reader client.Client) *EventWatcher {
-	return &EventWatcher{
+func newEventWatcher(reader client.Client) *EventReader {
+	return &EventReader{
 
 	}
 }
 
-func (watcher *EventWatcher) init() error {
+func (watcher *EventReader) init() error {
 	if _, err := watcher.client.GetOrCreateStream(watcher.ctx, MQTTEventStream); err != nil {
 		log.Error(err.Error())
 		return err
@@ -42,7 +42,7 @@ func (watcher *EventWatcher) init() error {
 	return nil
 }
 
-func (watcher *EventWatcher) getReader() client.ReadSeekCloser {
+func (watcher *EventReader) getReader() client.StreamReader {
 	reader, err := watcher.session.NewReader()
 	if err != nil {
 		log.Error(err)
@@ -51,7 +51,7 @@ func (watcher *EventWatcher) getReader() client.ReadSeekCloser {
 	return reader
 }
 
-func (watcher *EventWatcher) readEvent(reader io.Reader) error {
+func (watcher *EventReader) readEvent(reader io.Reader) error {
 	for {
 		var length int32
 		if err := binary.Read(reader, binary.BigEndian, &length); err != nil {
@@ -88,14 +88,14 @@ func (watcher *EventWatcher) readEvent(reader io.Reader) error {
 	}
 }
 
-func (watcher *EventWatcher) handleEvent(event proto.Message) {
+func (watcher *EventReader) handleEvent(event proto.Message) {
 	watcher.eventCallback(event)
 }
 
-func (watcher *EventWatcher) readEventLoop() {
+func (watcher *EventReader) readEventLoop() {
 	reader := watcher.getReader()
 	if reader == nil {
-		log.Fatal("EventWatcher getReader failed")
+		log.Fatal("EventReader getReader failed")
 	}
 	for {
 		offset, err := watcher.session.GetReadOffset()
