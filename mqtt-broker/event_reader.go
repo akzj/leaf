@@ -11,35 +11,36 @@ import (
 	"time"
 )
 
-const MQTTEventStream = "$streamIO$mqtt-event"
+const MQTTEventStream = "$streamIO-mqtt-broker-event"
 const MaxEventSize = 1024 * 64
 
 type EventReader struct {
-	sessionID     int64 //serverID
-	session       client.StreamSession
-	client        client.Client
-	ctx           context.Context
-	eventCallback func(message proto.Message)
+	ctx       context.Context
+	sessionID int64 //serverID
+	session   client.StreamSession
+	client    client.Client
+	callback  eventCallback
 }
 
-func newEventWatcher(reader client.Client) *EventReader {
-	return &EventReader{
+type eventCallback func(message proto.Message)
 
-	}
-}
-
-func (watcher *EventReader) init() error {
-	if _, err := watcher.client.GetOrCreateStream(watcher.ctx, MQTTEventStream); err != nil {
-		log.Error(err.Error())
-		return err
-	}
-	session, err := watcher.client.NewStreamSession(watcher.ctx, watcher.sessionID, MQTTEventStream)
+func newEventWatcher(sessionID int64, client client.Client, callback eventCallback) (*EventReader, error) {
+	ctx := context.Background()
+	_, err := client.GetOrCreateStream(ctx, MQTTEventStream)
 	if err != nil {
-		log.Error(err)
-		return err
+		return nil, errors.WithStack(err)
 	}
-	watcher.session = session
-	return nil
+	sess, err := client.NewStreamSession(ctx, sessionID, MQTTEventStream)
+	if err != nil {
+		return nil, err
+	}
+	return &EventReader{
+		ctx:       ctx,
+		sessionID: sessionID,
+		session:   sess,
+		client:    client,
+		callback:  callback,
+	}, nil
 }
 
 func (watcher *EventReader) getReader() client.StreamReader {
@@ -89,7 +90,7 @@ func (watcher *EventReader) readEvent(reader io.Reader) error {
 }
 
 func (watcher *EventReader) handleEvent(event proto.Message) {
-	watcher.eventCallback(event)
+	watcher.callback(event)
 }
 
 func (watcher *EventReader) readEventLoop() {
@@ -100,10 +101,18 @@ func (watcher *EventReader) readEventLoop() {
 	for {
 		offset, err := watcher.session.GetReadOffset()
 		if err != nil {
-			log.Fatal(err)
+			log.Error(err)
+			if sleep(watcher.ctx) != nil {
+				return
+			}
+			continue
 		}
 		if _, err := reader.Seek(offset, io.SeekStart); err != nil {
-			log.Fatal(err)
+			log.Error(err)
+			if sleep(watcher.ctx) != nil {
+				return
+			}
+			continue
 		}
 		if err := watcher.readEvent(reader); err != nil {
 			log.Error(err)

@@ -5,6 +5,7 @@ import (
 	block_queue "github.com/akzj/block-queue"
 	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -87,8 +88,7 @@ type setReadOffsetRequest struct {
 func NewMetaServiceClient(ctx context.Context, Addr string) (proto.MetaServiceClient, error) {
 	conn, err := grpc.DialContext(ctx, Addr, grpc.WithInsecure())
 	if err != nil {
-		log.Error(err)
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	return proto.NewMetaServiceClient(conn), nil
 }
@@ -254,7 +254,7 @@ func (c *client) GetOrCreateStream(ctx context.Context, name string) (streamID i
 
 	response, err := metaServiceClient.GetOrCreateStream(ctx, &proto.GetStreamInfoRequest{Name: name})
 	if err != nil {
-		return 0, err
+		return 0, errors.WithStack(err)
 	}
 	return response.Info.StreamId, nil
 }

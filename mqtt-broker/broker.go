@@ -1,12 +1,10 @@
 package mqtt_broker
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/binary"
-	block_queue "github.com/akzj/block-queue"
+	"github.com/akzj/block-queue"
 	"github.com/akzj/streamIO/client"
 	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/eclipse/paho.mqtt.golang/packets"
@@ -18,6 +16,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 )
 
@@ -30,19 +29,78 @@ type Broker struct {
 
 	tree unsafe.Pointer
 
-	EventWatcher *EventReader
+	eventWatcher *EventReader
 	eventQueue   *block_queue.Queue
 
-	client          client.Client
-	eventOffset     int64
-	treeApplyEvents int64
-	isCheckpoint    int32
+	client       client.Client
+	eventOffset  int64
+	treeChanges  int64
+	isCheckpoint int32
 
 	eventWriter client.StreamWriter
+
+	snapshot *Snapshot
+
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	listener []net.Listener
 }
 
-func (broker *Broker) Start() {
+func New(options Options) (*Broker, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	metaServerClient, err := client.NewMetaServiceClient(ctx, options.MetaServerAddr)
+	if err != nil {
+		return nil, err
+	}
+	cli := client.NewClient(metaServerClient)
+	if _, err := cli.GetOrCreateStream(ctx, MQTTEventStream); err != nil {
+		return nil, err
+	}
+	sess, err := cli.NewStreamSession(ctx, options.BrokerId, MQTTEventStream)
+	if err != nil {
+		return nil, err
+	}
+	eventWriter, err := sess.NewWriter()
+	if err != nil {
+		return nil, err
+	}
+
+	eventQueue := block_queue.NewQueue(128)
+	eventWatcher, err := newEventWatcher(options.BrokerId, cli, func(message proto.Message) {
+		eventQueue.Push(message)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	broker := &Broker{
+		Options:        options,
+		tlsConfig:      nil,
+		sessionsLocker: sync.Mutex{},
+		sessions:       map[string]*session{},
+		tree:           unsafe.Pointer(NewTree()),
+		eventWatcher:   eventWatcher,
+		eventQueue:     eventQueue,
+		client:         cli,
+		eventOffset:    0,
+		treeChanges:    0,
+		isCheckpoint:   0,
+		eventWriter:    eventWriter,
+		snapshot:       NewSnapshot(options.SnapshotPath),
+		ctx:            ctx,
+		cancel:         cancel,
+	}
+
+	return broker, nil
+}
+
+func (broker *Broker) Start() error {
+	if err := broker.snapshot.reloadSnapshot(broker); err != nil {
+		return err
+	}
 	broker.clientListenLoop()
+	return nil
 }
 
 func (broker *Broker) getSubscribeTree() *Tree {
@@ -127,7 +185,7 @@ func (broker *Broker) handleConnection(conn net.Conn) {
 	if returnCode := connectPacket.Validate(); returnCode != packets.Accepted {
 		logEntry.Errorf("Validate failed %s", packets.ConnackReturnCodes[returnCode])
 		connackPacket.ReturnCode = returnCode
-		connackPacket.Write(conn)
+		_ = connackPacket.Write(conn)
 		return
 	}
 	//check auth
@@ -135,12 +193,12 @@ func (broker *Broker) handleConnection(conn net.Conn) {
 		connectPacket.Username,
 		string(connectPacket.Password)); err != nil {
 		connackPacket.ReturnCode = packets.ErrRefusedServerUnavailable
-		connackPacket.Write(conn)
+		_ = connackPacket.Write(conn)
 		logEntry.Error(err)
 		return
 	} else if status == false {
 		connackPacket.ReturnCode = packets.ErrRefusedNotAuthorised
-		connackPacket.Write(conn)
+		_ = connackPacket.Write(conn)
 		return
 	}
 	//process session
@@ -164,7 +222,7 @@ func (broker *Broker) handleConnection(conn net.Conn) {
 	if err != nil {
 		log.Error(err.Error())
 		connackPacket.ReturnCode = packets.ErrRefusedServerUnavailable
-		connackPacket.Write(conn)
+		_ = connackPacket.Write(conn)
 		logEntry.Error(err)
 		return
 	}
@@ -180,7 +238,7 @@ func (broker *Broker) serve(listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			//todo process error
+			log.Error(err)
 			continue
 		}
 		go broker.handleConnection(conn)
@@ -224,18 +282,23 @@ func (broker *Broker) newSubscriber(event *SubscribeEvent) ([]Subscriber, error)
 }
 
 func (broker *Broker) handleSubscribeEvent(event *SubscribeEvent) {
+	tree := broker.getSubscribeTree().Clone()
+	broker.insertSubscriber2Tree(tree, event)
+	broker.setSubscribeTree(tree)
+}
+
+func (broker *Broker) insertSubscriber2Tree(tree *Tree, event *SubscribeEvent) {
 	subs, err := broker.newSubscriber(event)
 	if err != nil {
 		log.Error(err.Error())
 		return
 	}
-	tree := broker.getSubscribeTree().Clone()
 	for _, sub := range subs {
 		tree.Insert(sub)
 	}
-	broker.setSubscribeTree(tree)
 	broker.eventOffset = event.Offset
 }
+
 func (broker *Broker) handleUnSubscribeEvent(event *UnSubscribeEvent) {
 	tree := broker.getSubscribeTree().Clone()
 	for _, topic := range event.Topic {
@@ -247,15 +310,19 @@ func (broker *Broker) handleUnSubscribeEvent(event *UnSubscribeEvent) {
 
 func (broker *Broker) handleRetainMessage(event *RetainMessage) {
 	tree := broker.getSubscribeTree().Clone()
+	_ = broker.insertRetainMessage2Tree(tree, event)
+	broker.setSubscribeTree(tree)
+}
+func (broker *Broker) insertRetainMessage2Tree(tree *Tree, event *RetainMessage) error {
 	var buffer = bytes.NewReader(event.Data)
 	packet, err := packets.ReadPacket(buffer)
 	if err != nil {
 		log.Error(err.Error())
-		return
+		return err
 	}
 	tree.UpdateRetainPacket(packet.(*packets.PublishPacket))
-	broker.setSubscribeTree(tree)
 	broker.eventOffset = event.Offset
+	return nil
 }
 
 func (broker *Broker) processEventLoop() {
@@ -270,9 +337,9 @@ func (broker *Broker) processEventLoop() {
 			case *RetainMessage:
 				broker.handleRetainMessage(event)
 			}
-			broker.treeApplyEvents++
+			broker.treeChanges++
 		}
-		if broker.treeApplyEvents > broker.SubTreeCheckpointEventSize {
+		if broker.treeChanges > broker.SubTreeCheckpointEventSize {
 			if atomic.CompareAndSwapInt32(&broker.isCheckpoint, 0, 1) == false {
 				continue
 			}
@@ -293,73 +360,6 @@ func (broker *Broker) processEventLoop() {
 
 func (broker *Broker) getSnapshotFile() (io.WriteCloser, error) {
 	return nil, nil
-}
-
-func (broker *Broker) checkpoint(clone *Tree, offset int64) error {
-	writer, err := broker.getSnapshotFile()
-	if err != nil {
-		log.Error(err.Error())
-	}
-	bufio := bufio.NewWriterSize(writer, 1024*1024)
-	var data []byte
-	clone.Walk(func(path string, subscribers map[int64]Subscriber) bool {
-		for _, iter := range subscribers {
-			sub := iter.(*subscriber)
-			var subEvent = &SubscribeEvent{
-				StreamId:       sub.streamID,
-				SessionId:      sub.streamID,
-				StreamServerId: sub.streamServerID,
-				Topic:          map[string]int32{iter.Topic(): iter.Qos()},
-				Offset:         offset,
-			}
-			data, err = proto.Marshal(subEvent)
-			if err != nil {
-				log.Fatal(err)
-			}
-			data, err = proto.Marshal(&Event{Data: data, Type: Event_SubscribeEvent})
-			if err != nil {
-				log.Fatal(err)
-			}
-			if err = binary.Write(bufio, binary.BigEndian, int32(len(data))); err != nil {
-				log.Error(err)
-				return false
-			}
-			if _, err = bufio.Write(data); err != nil {
-				log.Error(err)
-				return false
-			}
-		}
-		return true
-	})
-
-	clone.RangeRetainMessage(func(packet *packets.PublishPacket) bool {
-		var buffer bytes.Buffer
-		if err = packet.Write(&buffer); err != nil {
-			log.Fatal(err)
-		}
-		data, err = proto.Marshal(&Event{Data: buffer.Bytes(), Type: Event_RetainMessage})
-		if err != nil {
-			log.Fatal(err.Error())
-		}
-		if err = binary.Write(bufio, binary.BigEndian, int32(len(data))); err != nil {
-			log.Error(err.Error())
-			return false
-		}
-		if _, err = bufio.Write(data); err != nil {
-			log.Error(err)
-			return false
-		}
-		return true
-	})
-	if err = bufio.Flush(); err != nil {
-		log.Error(err)
-		return err
-	}
-	if err = writer.Close(); err != nil {
-		log.Error(err)
-		return err
-	}
-	return nil
 }
 
 func (broker *Broker) handleUnSubscribePacket(MqttSessionItem *store.MQTTSessionItem, packet *packets.UnsubscribePacket) error {
@@ -406,4 +406,16 @@ func (broker *Broker) handleSubscribePacket(MqttSessionItem *store.MQTTSessionIt
 	})
 	wg.Wait()
 	return err
+}
+
+func (broker *Broker) checkpoint(clone *Tree, offset int64) error {
+	err := broker.snapshot.WriteSnapshot(SnapshotHeader{
+		TS:     time.Now(),
+		Offset: offset,
+	}, clone)
+	if err != nil {
+		log.Error(err)
+		return err
+	}
+	return nil
 }
