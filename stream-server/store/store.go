@@ -66,7 +66,7 @@ func (store *Store) ReadRequest(ctx context.Context, request *proto.ReadStreamRe
 		}
 		n, err := reader.Read(buffer[:size])
 		if err != nil {
-			log.WithField("n",n).Error(err)
+			log.WithField("n", n).WithField("streamID", request.StreamId).Error(err)
 			if err == io.EOF {
 				if watcher == nil {
 					watcher = store.sstore.Watcher(request.StreamId)

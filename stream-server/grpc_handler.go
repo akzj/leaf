@@ -23,7 +23,10 @@ func (server *StreamServer) ReadStream(request *proto.ReadStreamRequest, stream 
 			return err
 		}
 		size += int64(len(data))
-		log.WithField("offset", offset).WithField("size", size).WithField("data len", len(data)).Debug("response")
+		log.WithField("offset", offset).
+			WithField("size", size).
+			WithField("streamID", request.StreamId).
+			WithField("data len", len(data)).Debug("response")
 		return nil
 	})
 	if err == nil {
@@ -52,6 +55,7 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 			log.Warn(err)
 			return err
 		}
+		//log.WithField("request", request).Info("WriteStream")
 		server.store.WriteRequest(request, func(offset int64, writerErr error) {
 			response := &proto.WriteStreamResponse{
 				StreamId:  request.StreamId,

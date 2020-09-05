@@ -96,7 +96,8 @@ func (s *Snapshot) reloadSnapshot(broker *Broker) error {
 }
 
 func (s *Snapshot) WriteSnapshot(header SnapshotHeader, tree *Tree) error {
-	filename := filepath.Join(s.path, time.Now().String()+snapExtTmp)
+	_ = os.MkdirAll(s.path, 0777)
+	filename := filepath.Join(s.path, snapExtTmp)
 	file, err := os.Create(filename)
 	if err != nil {
 		log.Error(err.Error())

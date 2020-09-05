@@ -5,9 +5,13 @@ import (
 	"context"
 	"fmt"
 	"github.com/akzj/streamIO/proto"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"io"
 	"sync/atomic"
+	"time"
 )
 
 type streamReader struct {
@@ -28,7 +32,10 @@ func (s *streamReader) Offset() int64 {
 func (s *streamReader) Seek(offset int64, whence int) (int64, error) {
 	stat, err := s.client.GetStreamStat(s.ctx, &proto.GetStreamStatRequest{StreamID: s.streamID})
 	if err != nil {
-		return 0, err
+		if status.Convert(err).Code() == codes.NotFound {
+			return 0, nil
+		}
+		return 0, errors.WithStack(err)
 	}
 	switch whence {
 	case io.SeekStart:
@@ -48,8 +55,10 @@ func (s *streamReader) Seek(offset int64, whence int) (int64, error) {
 }
 
 func (s *streamReader) reset() {
-	_ = s.rpcStreamReader.Close()
-	s.rpcStreamReader = nil
+	if s.rpcStreamReader != nil {
+		_ = s.rpcStreamReader.Close()
+		s.rpcStreamReader = nil
+	}
 }
 
 func (s *streamReader) getBufReader() *bufio.Reader {
@@ -80,14 +89,13 @@ type rpcStreamReader struct {
 	streamID    int64
 	offset      int64
 	bytesToRead int64
-	notify      chan interface{}
 	ctx         context.Context
 	stop        context.CancelFunc
 	client      proto.StreamServiceClient
 	responses   chan []byte
 	minToRead   int64
-
-	readBuffer []byte
+	maxToRead   int64
+	readBuffer  []byte
 }
 
 func newRpcStreamReader(ctx context.Context,
@@ -99,14 +107,29 @@ func newRpcStreamReader(ctx context.Context,
 		streamID:    streamID,
 		offset:      offset,
 		bytesToRead: 0,
-		notify:      make(chan interface{}, 1),
+		ctx:         nil,
+		stop:        nil,
 		client:      client,
+		responses:   make(chan []byte, 4),
 		minToRead:   minToRead,
-		responses:   make(chan []byte, 100),
+		maxToRead:   1024 * 1024,
+		readBuffer:  nil,
 	}
 	reader.ctx, reader.stop = context.WithCancel(ctx)
 	go reader.rpcRequestLoop()
 	return reader
+}
+
+func sleepWithCtx(ctx context.Context, duration time.Duration) error {
+	if duration == 0 {
+		duration = time.Second
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(duration):
+		return nil
+	}
 }
 
 func (r *rpcStreamReader) rpcRequestLoop() {
@@ -118,18 +141,10 @@ func (r *rpcStreamReader) rpcRequestLoop() {
 		default:
 		}
 		size := atomic.LoadInt64(&r.bytesToRead)
-		if size < 0 {
-			select {
-			case <-r.notify:
-				continue
-			case <-r.ctx.Done():
-				return
-			}
-		}
 		if size < r.minToRead {
 			size = r.minToRead
-		} else if size > 1024*1024 {
-			size = 1024 * 1024
+		} else if size > r.maxToRead {
+			size = r.maxToRead
 		}
 		stream, err := r.client.ReadStream(r.ctx, &proto.ReadStreamRequest{
 			StreamId: r.streamID,
@@ -138,24 +153,36 @@ func (r *rpcStreamReader) rpcRequestLoop() {
 		})
 		if err != nil {
 			log.Error(err)
-			return
+			if err := sleepWithCtx(r.ctx, time.Second); err != nil {
+				log.Error(err.Error())
+				return
+			}
+			continue
 		}
+	readLoop:
 		for {
 			response, err := stream.Recv()
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
-				log.Warn(err)
-				break
+				switch status.Convert(err).Code() {
+				case codes.Canceled:
+					return
+				case codes.NotFound:
+					time.Sleep(time.Second)
+					break readLoop
+				default:
+					log.Warn(err)
+					time.Sleep(time.Second)
+					break readLoop
+				}
 			}
 			r.offset = response.Offset
 			atomic.AddInt64(&r.bytesToRead, -int64(len(response.Data)))
 			select {
 			case r.responses <- response.Data:
 			case <-r.ctx.Done():
-				//notify server close stream
-				_ = stream.CloseSend()
 				log.Warn(err)
 				return
 			}
@@ -164,13 +191,8 @@ func (r *rpcStreamReader) rpcRequestLoop() {
 }
 
 func (r *rpcStreamReader) Read(p []byte) (n int, err error) {
+	atomic.StoreInt64(&r.bytesToRead, int64(len(p)))
 	var size int
-	if atomic.AddInt64(&r.bytesToRead, int64(len(p))) > 0 {
-		select {
-		case <-r.notify:
-		default:
-		}
-	}
 	for len(p) > 0 {
 		if r.readBuffer != nil {
 			n := copy(p, r.readBuffer)

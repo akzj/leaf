@@ -41,6 +41,8 @@ func UnmarshalItem(data []byte) (mmdb.Item, error) {
 		item = new(StreamServerInfoItem)
 	case StreamServerHeartbeatItemType:
 		item = new(StreamServerHeartbeatItem)
+	case MQTTSessionItemType:
+		item = new(MQTTSessionItem)
 	default:
 		return nil, errors.Errorf("unknown type %d", itemType)
 	}

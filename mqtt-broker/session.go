@@ -1,7 +1,10 @@
 package mqtt_broker
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"github.com/akzj/streamIO/client"
 	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/eclipse/paho.mqtt.golang/packets"
@@ -43,6 +46,13 @@ type session struct {
 	log         *log.Entry
 }
 
+func pprint(obj interface{}) {
+	data, _ := json.Marshal(obj)
+	var buffer bytes.Buffer
+	json.Indent(&buffer, data, "  ", " ")
+	fmt.Println(string(buffer.String()))
+}
+
 //todo to
 func newSession(broker *Broker,
 	keepalive uint16,
@@ -51,18 +61,14 @@ func newSession(broker *Broker,
 	clientIdentifier string) (*session, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
-	if _, err := client.GetOrCreateStream(ctx, clientIdentifier); err != nil {
-		log.Error(err.Error())
-		return nil, err
-	}
 
 	info, create, err := client.GetOrCreateMQTTSession(ctx, clientIdentifier)
 	if err != nil {
 		log.Error(err.Error())
 		return nil, err
 	}
-	//
-	streamSession, err := client.NewStreamSession(ctx, 0, clientIdentifier)
+	pprint(info)
+	streamSession, err := client.NewStreamSession2(ctx, info.SessionId, info.StreamId, info.StreamServerId)
 	if err != nil {
 		log.Error(err.Error())
 		return nil, err
@@ -79,6 +85,7 @@ func newSession(broker *Broker,
 	}
 	if offset != 0 {
 		if _, err := reader.Seek(offset, io.SeekStart); err != nil {
+			_ = reader.Close()
 			log.Error(err)
 			return nil, err
 		}
@@ -122,22 +129,15 @@ func (sess *session) readStreamLoop() {
 			}
 			lastAckOffset = atomic.LoadInt64(&sess.ackOffset)
 			if err := sess.streamSession.SetReadOffset(lastAckOffset); err != nil {
-				sess.log.Error(err)
+				sess.log.Errorf("%+v", err)
 			}
 		}
 	}()
-	var offset = sess.streamReader.Offset()
 	for {
 		controlPacket, err := packets.ReadPacket(sess.streamReader)
 		if err != nil {
-			sess.log.Error(err)
-			if _, err := sess.streamReader.Seek(offset, io.SeekStart); err != nil {
-				if err := sleep(sess.ctx); err != nil {
-					sess.log.Error(err.Error()) //ctx is cancel
-					return
-				}
-			}
-			continue
+			sess.log.Errorf("%+v", err)
+			return
 		}
 		atomic.StoreInt64(&sess.offset, sess.streamReader.Offset())
 		switch packet := controlPacket.(type) {
@@ -165,7 +165,8 @@ func (sess *session) readConnLoop() {
 			return
 		}
 		if err := sess.handlePacket(packet); err != nil {
-			packets.NewControlPacket(packets.Disconnect).Write(sess.conn)
+			sess.log.Errorf("%+v", err)
+			_ = sess.Close()
 			return
 		}
 	}
@@ -174,22 +175,17 @@ func (sess *session) readConnLoop() {
 func (sess *session) handlePacket(controlPacket packets.ControlPacket) error {
 	switch packet := controlPacket.(type) {
 	case *packets.PublishPacket:
-		sess.limiter <- struct{}{}
-		go func() {
-			defer func() {
-				<-sess.limiter
-			}()
-			_ = sess.handlePublishPacket(packet)
-		}()
+		return sess.handlePublishPacket(packet)
 	case *packets.PubrelPacket:
+		return nil
 	case *packets.SubscribePacket:
-		sess.handleSubscribePacket(packet)
+		return sess.handleSubscribePacket(packet)
 	case *packets.UnsubscribePacket:
-		sess.handleUnsubscribePacket(packet)
+		return sess.handleUnsubscribePacket(packet)
 	case *packets.DisconnectPacket:
-		sess.handleDisconnectPacket(packet)
+		return sess.handleDisconnectPacket(packet)
 	case *packets.PingreqPacket:
-		sess.handlePingReqPacket(packet)
+		return sess.handlePingReqPacket(packet)
 	}
 	return nil
 }
@@ -204,7 +200,10 @@ func minQos(q1, q2 int32) int32 {
 func (sess *session) sendPacket(packet packets.ControlPacket) error {
 	sess.connWLocker.Lock()
 	defer sess.connWLocker.Unlock()
-	return packet.Write(sess.conn)
+	if err := packet.Write(sess.conn); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
 }
 
 func (sess *session) sendPacket2Subscribers(packet *packets.PublishPacket) error {
@@ -227,7 +226,7 @@ func (sess *session) sendPacket2Subscribers(packet *packets.PublishPacket) error
 	}
 	wg.Wait()
 	if eObj := atomic.LoadPointer(&errPointer); eObj != nil {
-		return *(*error)(eObj)
+		return errors.WithStack(*(*error)(eObj))
 	}
 	return nil
 }
@@ -242,12 +241,13 @@ func (sess *session) handlePublishPacketQos0(packet *packets.PublishPacket) erro
 
 func (sess *session) handlePublishPacketQos1(packet *packets.PublishPacket) error {
 	if err := sess.sendPacket2Subscribers(packet); err != nil {
-		//todo handle error
+		return err
 	} else {
 		puback := packets.NewControlPacket(packets.Puback).(*packets.PubackPacket)
 		puback.MessageID = packet.MessageID
 		if err := sess.sendPacket(puback); err != nil {
-			sess.log.Error(err)
+			sess.log.Errorf("%+v", err)
+			return err
 		}
 	}
 	return nil
@@ -255,27 +255,30 @@ func (sess *session) handlePublishPacketQos1(packet *packets.PublishPacket) erro
 
 func (sess *session) handlePublishPacketQos2(packet *packets.PublishPacket) error {
 	if err := sess.sendPacket2Subscribers(packet); err != nil {
-		//todo handle error
+		return err
 	} else {
-		puback := packets.NewControlPacket(packets.Pubrec).(*packets.PubrecPacket)
-		puback.MessageID = packet.MessageID
-		if err := sess.sendPacket(puback); err != nil {
-			sess.log.Error(err.Error())
-			//todo process error
+		pubRec := packets.NewControlPacket(packets.Pubrec).(*packets.PubrecPacket)
+		pubRec.MessageID = packet.MessageID
+		if err := sess.sendPacket(pubRec); err != nil {
+			sess.log.Errorf("%+v", err)
+			return err
 		}
-		packet := packets.NewControlPacket(packets.Pubcomp).(*packets.PubcompPacket)
-		packet.MessageID = packet.MessageID
-		if err := sess.sendPacket(puback); err != nil {
-			sess.log.Error(err)
+		pubComp := packets.NewControlPacket(packets.Pubcomp).(*packets.PubcompPacket)
+		pubComp.MessageID = packet.MessageID
+		if err := sess.sendPacket(pubComp); err != nil {
+			sess.log.Errorf("%+v", err)
+			return err
 		}
 	}
 	return nil
 }
 
 func (sess *session) handlePublishPacket(packet *packets.PublishPacket) error {
+	log.WithField("packet", packet).Info("handlePublishPacket")
 	if packet.Retain {
 		if err := sess.broker.handleRetainPacket(packet); err != nil {
-			sess.log.Error(err)
+			sess.log.Errorf("%+v", err)
+			return err
 		}
 	}
 	switch packet.Qos {
@@ -291,16 +294,17 @@ func (sess *session) handlePublishPacket(packet *packets.PublishPacket) error {
 }
 
 func (sess *session) handleOutPublishPacket(packet *packets.PublishPacket) {
+	log.Infof("pub message %s topic %s ", string(packet.Payload), packet.TopicName)
 	switch packet.Details().Qos {
 	case 0:
 		if err := sess.sendPacket(packet); err != nil {
-			sess.log.Error(err.Error())
+			sess.log.Errorf("%+v", err)
 			_ = sess.Close()
 		}
 		atomic.StoreInt64(&sess.ackOffset, sess.offset)
 	case 1:
 		if err := sess.sendPacket(packet); err != nil {
-			sess.log.Error(err.Error())
+			sess.log.Errorf("%+v", err)
 			_ = sess.Close()
 		}
 		sess.ackMapLocker.Lock()
@@ -309,13 +313,13 @@ func (sess *session) handleOutPublishPacket(packet *packets.PublishPacket) {
 	}
 }
 
-func (sess *session) handleSubscribePacket(packet *packets.SubscribePacket) {
-	subackPacket := packets.NewControlPacket(packets.Suback).(*packets.SubackPacket)
-	subackPacket.MessageID = packet.MessageID
-	retCode := byte(0x01)
+func (sess *session) handleSubscribePacket(packet *packets.SubscribePacket) error {
+	subAck := packets.NewControlPacket(packets.Suback).(*packets.SubackPacket)
+	subAck.MessageID = packet.MessageID
+	sess.log.WithField("packet", packet).Info("handleSubscribePacket")
 	if err := sess.broker.handleSubscribePacket(sess.MQTTSessionInfo, packet); err != nil {
-		sess.log.Error(err)
-		retCode = 0x80
+		sess.log.Errorf("%+v", err)
+		return err
 	} else {
 		var Topic = make(map[string]int32)
 		for index, topic := range packet.Topics {
@@ -323,56 +327,45 @@ func (sess *session) handleSubscribePacket(packet *packets.SubscribePacket) {
 			Topic[topic] = int32(qos)
 		}
 		if err := sess.client.UpdateMQTTClientSession(sess.ctx,
-			sess.MQTTSessionInfo.ClientIdentifier,
-			nil, Topic); err != nil {
-			sess.log.Error(err.Error())
+			sess.MQTTSessionInfo.ClientIdentifier, nil, Topic); err != nil {
+			sess.log.Errorf("%+v", err)
+			return err
 		}
 	}
 	for range packet.Topics {
-		subackPacket.ReturnCodes = append(subackPacket.ReturnCodes, retCode)
+		subAck.ReturnCodes = append(subAck.ReturnCodes, byte(0x01))
 	}
-	if err := sess.sendPacket(subackPacket); err != nil {
-		sess.log.Error(err.Error())
-		_ = sess.Close()
+	if err := sess.sendPacket(subAck); err != nil {
+		sess.log.Errorf("%+v", err)
+		return err
 	}
+	return nil
 }
 
-func (sess *session) handleDisconnectPacket(_ *packets.DisconnectPacket) {
+func (sess *session) handleDisconnectPacket(_ *packets.DisconnectPacket) error {
 	sess.willMessage = nil
-	if err := sess.Close(); err != nil {
-		sess.log.Error(err)
-	}
+	return fmt.Errorf("session disconnect")
 }
 
-func (sess *session) handlePingReqPacket(_ *packets.PingreqPacket) {
-	if err := sess.sendPacket(packets.NewControlPacket(packets.Pingresp)); err != nil {
-		sess.log.Error(err.Error())
-		if err := sess.Close(); err != nil {
-			sess.log.Error(err.Error())
-		}
-	}
+func (sess *session) handlePingReqPacket(_ *packets.PingreqPacket) error {
+	return sess.sendPacket(packets.NewControlPacket(packets.Pingresp))
 }
 
-func (sess *session) handleUnsubscribePacket(packet *packets.UnsubscribePacket) {
+func (sess *session) handleUnsubscribePacket(packet *packets.UnsubscribePacket) error {
 	if err := sess.broker.handleUnSubscribePacket(sess.MQTTSessionInfo, packet); err != nil {
-		sess.log.Error(err.Error())
+		return err
 	}
 	ack := packets.NewControlPacket(packets.Suback).(*packets.SubackPacket)
 	ack.MessageID = packet.MessageID
-	if err := sess.sendPacket(ack); err != nil {
-		sess.log.Error(err.Error())
-		if err := sess.Close(); err != nil {
-			sess.log.Error(err.Error())
-		}
-	}
+	return sess.sendPacket(ack)
 }
 
 func (sess *session) Close() error {
 	var err error
 	sess.closeOnce.Do(func() {
 		if sess.willMessage != nil {
-			if err := sess.handlePublishPacket(sess.willMessage); err != nil {
-				sess.log.Error(err)
+			if err = sess.handlePublishPacket(sess.willMessage); err != nil {
+				sess.log.Errorf("%+v", err)
 			}
 		}
 		err = sess.conn.Close()

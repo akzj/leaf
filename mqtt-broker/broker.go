@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
+	"fmt"
 	"github.com/akzj/block-queue"
 	"github.com/akzj/streamIO/client"
 	"github.com/akzj/streamIO/meta-server/store"
@@ -13,6 +15,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -48,14 +52,25 @@ type Broker struct {
 }
 
 func New(options Options) *Broker {
+	if options.LogFile != "" {
+		_ = os.MkdirAll(filepath.Dir(options.LogFile), 0777)
+		file, err := os.OpenFile(options.LogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+		if err != nil {
+			log.Fatalf("%+v", err)
+		}
+		log.SetOutput(file)
+		log.SetReportCaller(true)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	metaServerClient, err := client.NewMetaServiceClient(ctx, options.MetaServerAddr)
 	if err != nil {
 		log.Fatalf("%+v", err)
 	}
 	cli := client.NewClient(metaServerClient)
-	if _, err := cli.GetOrCreateStream(ctx, MQTTEventStream); err != nil {
+	if id, err := cli.GetOrCreateStream(ctx, MQTTEventStream); err != nil {
 		log.Fatalf("%+v", err)
+	} else {
+		fmt.Println("MQTTEventStream", id)
 	}
 	sess, err := cli.NewStreamSession(ctx, options.BrokerId, MQTTEventStream)
 	if err != nil {
@@ -99,7 +114,12 @@ func (broker *Broker) Start() error {
 	if err := broker.snapshot.reloadSnapshot(broker); err != nil {
 		return err
 	}
-	return broker.clientListenLoop()
+	go broker.eventReader.readEventLoop()
+	if err := broker.clientListenLoop(); err != nil {
+		log.Fatal(err.Error())
+	}
+	broker.processEventLoop()
+	return nil
 }
 
 func (broker *Broker) getSubscribeTree() *Tree {
@@ -268,10 +288,9 @@ func (broker *Broker) clientListenLoop() error {
 	if err != nil {
 		return err
 	}
-	for _, listener := range listeners[1:] {
+	for _, listener := range listeners {
 		go broker.serve(listener)
 	}
-	broker.serve(listeners[0])
 	return nil
 }
 
@@ -302,6 +321,7 @@ func (broker *Broker) newSubscriber(event *SubscribeEvent) ([]Subscriber, error)
 }
 
 func (broker *Broker) handleSubscribeEvent(event *SubscribeEvent) {
+	fmt.Println(event.Topic)
 	tree := broker.getSubscribeTree().Clone()
 	broker.insertSubscriber2Tree(tree, event)
 	broker.setSubscribeTree(tree)
@@ -314,6 +334,7 @@ func (broker *Broker) insertSubscriber2Tree(tree *Tree, event *SubscribeEvent) {
 		return
 	}
 	for _, sub := range subs {
+		fmt.Println(sub.Topic(), sub.ID())
 		tree.Insert(sub)
 	}
 }
@@ -388,45 +409,62 @@ func (broker *Broker) handleUnSubscribePacket(MqttSessionItem *store.MQTTSession
 		StreamServerId: MqttSessionItem.StreamId,
 		Topic:          packet.Topics,
 	}
-	data, err := proto.Marshal(&event)
-	if err != nil {
-		log.Fatal(err)
+	return broker.writeEvent(&event)
+}
+
+func (broker *Broker) writeEvent(message proto.Message) error {
+	event := Event{}
+	switch typ := message.(type) {
+	case *SubscribeEvent:
+		event.Type = Event_SubscribeEvent
+	case *UnSubscribeEvent:
+		event.Type = Event_UnSubscribeEvent
+	case *RetainMessage:
+		event.Type = Event_RetainMessage
+	default:
+		panic("unknown message type" + typ.String())
 	}
+	data, err := proto.Marshal(message)
+	if err != nil {
+		log.Fatalf("%+v", err)
+	}
+	event.Data = data
+	data, err = proto.Marshal(&event)
+	if err != nil {
+		log.Fatalf("%+v", err)
+	}
+	var buffer bytes.Buffer
+	_ = binary.Write(&buffer, binary.BigEndian, int32(len(data)))
+	buffer.Write(data)
 	var wg sync.WaitGroup
 	wg.Wait()
-	broker.eventWriter.WriteWithCb(data, func(e error) {
+	wg.Add(1)
+	broker.eventWriter.WriteWithCb(buffer.Bytes(), func(e error) {
 		wg.Done()
 		err = e
 	})
 	wg.Wait()
-	return err
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	fmt.Println("write event success", broker.eventWriter.StreamID(), len(data))
+	return nil
 }
 
-func (broker *Broker) handleSubscribePacket(MqttSessionItem *store.MQTTSessionItem,
+func (broker *Broker) handleSubscribePacket(SessionItem *store.MQTTSessionItem,
 	packet *packets.SubscribePacket) error {
-
+	fmt.Println(SessionItem)
 	event := SubscribeEvent{
-		StreamId:       MqttSessionItem.StreamId,
-		SessionId:      MqttSessionItem.SessionId,
-		StreamServerId: MqttSessionItem.StreamId,
+		StreamId:       SessionItem.StreamId,
+		SessionId:      SessionItem.SessionId,
+		StreamServerId: SessionItem.StreamServerId,
 		Topic:          map[string]int32{},
 	}
 	for index, topic := range packet.Topics {
 		qos := packet.Qoss[index]
 		event.Topic[topic] = int32(qos)
 	}
-	data, err := proto.Marshal(&event)
-	if err != nil {
-		log.Fatal(err)
-	}
-	var wg sync.WaitGroup
-	wg.Wait()
-	broker.eventWriter.WriteWithCb(data, func(e error) {
-		wg.Done()
-		err = e
-	})
-	wg.Wait()
-	return err
+	return broker.writeEvent(&event)
 }
 
 func (broker *Broker) handleRetainPacket(packet *packets.PublishPacket) error {
@@ -435,18 +473,7 @@ func (broker *Broker) handleRetainPacket(packet *packets.PublishPacket) error {
 	event := RetainMessage{
 		Data: buffer.Bytes(),
 	}
-	data, err := proto.Marshal(&event)
-	if err != nil {
-		log.Fatal(err)
-	}
-	var wg sync.WaitGroup
-	wg.Wait()
-	broker.eventWriter.WriteWithCb(data, func(e error) {
-		wg.Done()
-		err = e
-	})
-	wg.Wait()
-	return err
+	return broker.writeEvent(&event)
 }
 
 func (broker *Broker) checkpoint(clone *Tree, offset int64) error {

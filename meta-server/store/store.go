@@ -8,6 +8,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -300,15 +301,16 @@ func (store *Store) GetOrCreateMQTTSession(identifier string) (*MQTTSessionItem,
 			create = true
 			var streamID int64
 			var streamServerID int64
+			var streamName string
 			for retry := 0; retry < 10; retry++ {
-				id := uuid.New().String()
-				info, create, err := store.CreateStream(id)
+				streamName = strings.ReplaceAll(uuid.New().String(), "-", "")
+				info, create, err := store.CreateStream(streamName)
 				if err != nil {
 					log.Error(err)
 					return err
 				}
 				if create == false {
-					log.Warnf("create stream %s exist ....", id)
+					log.Warnf("create stream %s exist ....", streamName)
 					continue
 				}
 				streamID = info.StreamId
@@ -316,12 +318,14 @@ func (store *Store) GetOrCreateMQTTSession(identifier string) (*MQTTSessionItem,
 				break
 			}
 			item = &MQTTSessionItem{
-				SessionId:        streamID,
 				StreamId:         streamID,
+				SessionId:        streamID,
 				StreamServerId:   streamServerID,
 				ClientIdentifier: identifier,
+				StreamName:       streamName,
 				Topics:           nil,
 			}
+
 			tx.ReplaceOrInsert(item)
 		}
 		return nil
