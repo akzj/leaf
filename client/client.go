@@ -98,10 +98,12 @@ func NewMetaServiceClient(ctx context.Context, Addr string) (proto.MetaServiceCl
 
 func NewClient(sc proto.MetaServiceClient) Client {
 	var c = &client{
-		streamServiceClientLocker: sync.Mutex{},
-		metaServerClient:          sc,
-		streamServiceClient:       make(map[int64]proto.StreamServiceClient),
-		setReadOffsetRequestQueue: block_queue.NewQueue(10240),
+		streamServiceClientLocker:  sync.Mutex{},
+		metaServerClient:           sc,
+		streamServiceClient:        make(map[int64]proto.StreamServiceClient),
+		setReadOffsetRequestQueue:  block_queue.NewQueue(10240),
+		streamRequestWritersLocker: sync.Mutex{},
+		streamRequestWriters:       map[int64]*streamRequestWriter{},
 	}
 	go c.processSetReadOffsetRequestLoop()
 	return c

@@ -17,9 +17,9 @@ type streamRequestWriter struct {
 	cancel context.CancelFunc
 
 	requestId          int64
-	requests           chan writeStreamRequest
 	locker             sync.Mutex
 	writeStreamRequest map[int64]writeStreamRequest
+	requests           chan writeStreamRequest
 }
 
 type writeStreamRequest struct {
@@ -36,7 +36,9 @@ func newWriteStreamRequest(ctx context.Context, client proto.StreamServiceClient
 		ctx:                ctx,
 		cancel:             cancel,
 		requestId:          0,
+		locker:             sync.Mutex{},
 		writeStreamRequest: map[int64]writeStreamRequest{},
+		requests:           make(chan writeStreamRequest),
 	}
 }
 func (writer *streamRequestWriter) readResponse(stream proto.StreamService_WriteStreamClient) {
@@ -96,10 +98,11 @@ func (writer *streamRequestWriter) writeLoop() {
 			}
 			continue
 		}
-		writer.readResponse(stream)
+		go writer.readResponse(stream)
 		for {
 			select {
 			case <-writer.ctx.Done():
+				log.Error(writer.ctx.Err())
 			case request := <-writer.requests:
 				request.requestID = writer.getRequestID()
 				writer.addRequest(request)
