@@ -29,8 +29,8 @@ type Broker struct {
 
 	tree unsafe.Pointer
 
-	eventWatcher *EventReader
-	eventQueue   *block_queue.Queue
+	eventReader *EventReader
+	eventQueue  *block_queue.Queue
 
 	client       client.Client
 	eventOffset  int64
@@ -67,7 +67,7 @@ func New(options Options) (*Broker, error) {
 	}
 
 	eventQueue := block_queue.NewQueue(128)
-	eventWatcher, err := newEventWatcher(options.BrokerId, cli, func(message proto.Message) {
+	eventWatcher, err := newEventReader(options.BrokerId, cli, func(message EventWithOffset) {
 		eventQueue.Push(message)
 	})
 	if err != nil {
@@ -80,7 +80,7 @@ func New(options Options) (*Broker, error) {
 		sessionsLocker: sync.Mutex{},
 		sessions:       map[string]*session{},
 		tree:           unsafe.Pointer(NewTree()),
-		eventWatcher:   eventWatcher,
+		eventReader:    eventWatcher,
 		eventQueue:     eventQueue,
 		client:         cli,
 		eventOffset:    0,
@@ -205,7 +205,7 @@ func (broker *Broker) handleConnection(conn net.Conn) {
 	if connectPacket.CleanSession {
 		if err := broker.deleteSession(connectPacket.ClientIdentifier); err != nil {
 			connackPacket.ReturnCode = packets.ErrRefusedServerUnavailable
-			connackPacket.Write(conn)
+			_ = connackPacket.Write(conn)
 			logEntry.Error(err)
 		}
 		//[MQTT-3.1.2-6]。
@@ -227,32 +227,52 @@ func (broker *Broker) handleConnection(conn net.Conn) {
 		return
 	}
 	connackPacket.SessionPresent = sess.create
+	connackPacket.ReturnCode = packets.Accepted
 	if err := connackPacket.Write(conn); err != nil {
 		return
+	}
+	if connectPacket.WillFlag {
+		willMessage := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
+		willMessage.Payload = connectPacket.WillMessage
+		willMessage.TopicName = connectPacket.WillTopic
+		sess.setWillMessage(willMessage)
 	}
 	go sess.readStreamLoop()
 	sess.readConnLoop()
 }
 
 func (broker *Broker) serve(listener net.Listener) {
+	var tempDelay time.Duration
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Error(err)
-			continue
+			if ne, ok := err.(net.Error); ok && ne.Temporary() {
+				if tempDelay == 0 {
+					tempDelay = 5 * time.Millisecond
+				} else {
+					tempDelay *= 2
+				}
+				if max := 1 * time.Second; tempDelay > max {
+					tempDelay = max
+				}
+				log.Error("http: Accept error: %v; retrying in %v", err, tempDelay)
+				time.Sleep(tempDelay)
+				continue
+			}
 		}
 		go broker.handleConnection(conn)
 	}
 }
 
-func (broker *Broker) clientListenLoop() {
+func (broker *Broker) clientListenLoop() error {
 	listeners, err := broker.newListener()
 	if err != nil {
-		log.Panic(err)
+		return err
 	}
 	for _, listener := range listeners {
 		go broker.serve(listener)
 	}
+	return nil
 }
 
 func (broker *Broker) checkConnectAuth(clientIdentifier string, username string, password string) (bool, error) {
@@ -296,7 +316,6 @@ func (broker *Broker) insertSubscriber2Tree(tree *Tree, event *SubscribeEvent) {
 	for _, sub := range subs {
 		tree.Insert(sub)
 	}
-	broker.eventOffset = event.Offset
 }
 
 func (broker *Broker) handleUnSubscribeEvent(event *UnSubscribeEvent) {
@@ -305,7 +324,6 @@ func (broker *Broker) handleUnSubscribeEvent(event *UnSubscribeEvent) {
 		tree.Delete(&subscriber{topic: topic, streamID: event.StreamId})
 	}
 	broker.setSubscribeTree(tree)
-	broker.eventOffset = event.Offset
 }
 
 func (broker *Broker) handleRetainMessage(event *RetainMessage) {
@@ -321,22 +339,25 @@ func (broker *Broker) insertRetainMessage2Tree(tree *Tree, event *RetainMessage)
 		return err
 	}
 	tree.UpdateRetainPacket(packet.(*packets.PublishPacket))
-	broker.eventOffset = event.Offset
 	return nil
 }
 
 func (broker *Broker) processEventLoop() {
 	for {
-		events := broker.eventQueue.PopAll(nil)
-		for _, event := range events {
-			switch event := event.(type) {
+		items := broker.eventQueue.PopAll(nil)
+		for _, item := range items {
+			event := item.(EventWithOffset)
+			switch event := event.event.(type) {
 			case *SubscribeEvent:
 				broker.handleSubscribeEvent(event)
 			case *UnSubscribeEvent:
 				broker.handleUnSubscribeEvent(event)
 			case *RetainMessage:
 				broker.handleRetainMessage(event)
+			default:
+				log.Fatal("unknown event %+v", event)
 			}
+			broker.eventOffset = event.offset
 			broker.treeChanges++
 		}
 		if broker.treeChanges > broker.SubTreeCheckpointEventSize {
@@ -348,10 +369,7 @@ func (broker *Broker) processEventLoop() {
 				defer func() {
 					atomic.StoreInt32(&broker.isCheckpoint, 0)
 				}()
-				if err := broker.checkpoint(clone, broker.eventOffset); err != nil {
-					log.Error(err)
-					return
-				}
+				broker.checkpoint(clone, broker.eventOffset)
 				log.Infof("checkpoint success")
 			}()
 		}
@@ -362,7 +380,8 @@ func (broker *Broker) getSnapshotFile() (io.WriteCloser, error) {
 	return nil, nil
 }
 
-func (broker *Broker) handleUnSubscribePacket(MqttSessionItem *store.MQTTSessionItem, packet *packets.UnsubscribePacket) error {
+func (broker *Broker) handleUnSubscribePacket(MqttSessionItem *store.MQTTSessionItem,
+	packet *packets.UnsubscribePacket) error {
 	event := UnSubscribeEvent{
 		StreamId:       MqttSessionItem.StreamId,
 		SessionId:      MqttSessionItem.SessionId,
@@ -383,7 +402,9 @@ func (broker *Broker) handleUnSubscribePacket(MqttSessionItem *store.MQTTSession
 	return err
 }
 
-func (broker *Broker) handleSubscribePacket(MqttSessionItem *store.MQTTSessionItem, packet *packets.SubscribePacket) error {
+func (broker *Broker) handleSubscribePacket(MqttSessionItem *store.MQTTSessionItem,
+	packet *packets.SubscribePacket) error {
+
 	event := SubscribeEvent{
 		StreamId:       MqttSessionItem.StreamId,
 		SessionId:      MqttSessionItem.SessionId,
@@ -408,6 +429,26 @@ func (broker *Broker) handleSubscribePacket(MqttSessionItem *store.MQTTSessionIt
 	return err
 }
 
+func (broker *Broker) handleRetainPacket(packet *packets.PublishPacket) error {
+	var buffer bytes.Buffer
+	_ = packet.Write(&buffer)
+	event := RetainMessage{
+		Data: buffer.Bytes(),
+	}
+	data, err := proto.Marshal(&event)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	wg.Wait()
+	broker.eventWriter.WriteWithCb(data, func(e error) {
+		wg.Done()
+		err = e
+	})
+	wg.Wait()
+	return err
+}
+
 func (broker *Broker) checkpoint(clone *Tree, offset int64) error {
 	err := broker.snapshot.WriteSnapshot(SnapshotHeader{
 		TS:     time.Now(),
@@ -416,6 +457,9 @@ func (broker *Broker) checkpoint(clone *Tree, offset int64) error {
 	if err != nil {
 		log.Error(err)
 		return err
+	}
+	if err := broker.eventReader.commitReadOffset(offset);err != nil{
+		log.Error(err)
 	}
 	return nil
 }

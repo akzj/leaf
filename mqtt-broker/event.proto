@@ -19,7 +19,6 @@ message SubscribeEvent{
   int64 session_id = 2;
   int64 stream_server_id = 3;
   map<string, int32> topic = 4;
-  int64 offset = 5;
 }
 
 message UnSubscribeEvent{
@@ -27,10 +26,8 @@ message UnSubscribeEvent{
   int64 session_id = 2;
   int64 stream_server_id = 3;
   repeated  string  topic = 4;
-  int64 offset = 5;
 }
 
 message RetainMessage {
   bytes data = 1;
-  int64 offset = 5;
 }

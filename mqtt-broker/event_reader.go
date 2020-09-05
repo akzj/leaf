@@ -12,7 +12,7 @@ import (
 )
 
 const MQTTEventStream = "$streamIO-mqtt-broker-event"
-const MaxEventSize = 1024 * 64
+const MaxEventSize = 1024 * 1024
 
 type EventReader struct {
 	ctx       context.Context
@@ -20,11 +20,17 @@ type EventReader struct {
 	session   client.StreamSession
 	client    client.Client
 	callback  eventCallback
+	reader    client.StreamReader
 }
 
-type eventCallback func(message proto.Message)
+type EventWithOffset struct {
+	event  proto.Message
+	offset int64
+}
 
-func newEventWatcher(sessionID int64, client client.Client, callback eventCallback) (*EventReader, error) {
+type eventCallback func(message EventWithOffset)
+
+func newEventReader(sessionID int64, client client.Client, callback eventCallback) (*EventReader, error) {
 	ctx := context.Background()
 	_, err := client.GetOrCreateStream(ctx, MQTTEventStream)
 	if err != nil {
@@ -34,43 +40,63 @@ func newEventWatcher(sessionID int64, client client.Client, callback eventCallba
 	if err != nil {
 		return nil, err
 	}
+	reader, err := sess.NewReader()
+	if err != nil {
+		log.Error(err)
+		return nil, err
+	}
+	offset, err := sess.GetReadOffset()
+	if err != nil {
+		log.Error(err)
+		return nil, err
+	}
+	if offset != 0 {
+		if _, err := reader.Seek(offset, io.SeekStart); err != nil {
+			log.Error(err)
+			return nil, err
+		}
+	}
 	return &EventReader{
 		ctx:       ctx,
 		sessionID: sessionID,
 		session:   sess,
 		client:    client,
 		callback:  callback,
+		reader:    reader,
 	}, nil
 }
 
-func (watcher *EventReader) getReader() client.StreamReader {
-	reader, err := watcher.session.NewReader()
-	if err != nil {
-		log.Error(err)
-		return nil
-	}
-	return reader
+func (watcher *EventReader) handleEvent(event EventWithOffset) {
+	watcher.callback(event)
 }
 
-func (watcher *EventReader) readEvent(reader io.Reader) error {
+func (watcher *EventReader) readEventLoop() {
+	offset := watcher.reader.Offset()
+	resetReader := func() {
+		if _, err := watcher.reader.Seek(offset, io.SeekStart); err != nil {
+			log.Error(err)
+			time.Sleep(time.Second)
+		}
+	}
 	for {
 		var length int32
-		if err := binary.Read(reader, binary.BigEndian, &length); err != nil {
+		if err := binary.Read(watcher.reader, binary.BigEndian, &length); err != nil {
 			log.Error(err.Error())
-			return err
+			resetReader()
+			continue
 		}
 		if length > MaxEventSize {
-			log.WithField("length", length).Errorf("length > MaxEventSize")
-			return errors.New("event length error")
+			log.WithField("length", length).Panic("watcher.reader event length error")
 		}
 		data := make([]byte, length)
-		if _, err := io.ReadFull(reader, data); err != nil {
-			return err
+		if _, err := io.ReadFull(watcher.reader, data); err != nil {
+			log.Error(err)
+			resetReader()
+			continue
 		}
 		var event Event
 		if err := proto.Unmarshal(data, &event); err != nil {
-			log.Errorf(err.Error())
-			return err
+			log.Panic(err)
 		}
 		var message proto.Message
 		switch event.Type {
@@ -82,46 +108,18 @@ func (watcher *EventReader) readEvent(reader io.Reader) error {
 			message = &RetainMessage{}
 		}
 		if err := proto.Unmarshal(event.Data, message); err != nil {
-			log.Error(err.Error())
-			return err
+			log.Panic(err)
 		}
-		watcher.handleEvent(message)
+		offset = watcher.reader.Offset()
+		watcher.handleEvent(EventWithOffset{
+			event:  message,
+			offset: offset,
+		})
 	}
 }
 
-func (watcher *EventReader) handleEvent(event proto.Message) {
-	watcher.callback(event)
-}
-
-func (watcher *EventReader) readEventLoop() {
-	reader := watcher.getReader()
-	if reader == nil {
-		log.Fatal("EventReader getReader failed")
-	}
-	for {
-		offset, err := watcher.session.GetReadOffset()
-		if err != nil {
-			log.Error(err)
-			if sleep(watcher.ctx) != nil {
-				return
-			}
-			continue
-		}
-		if _, err := reader.Seek(offset, io.SeekStart); err != nil {
-			log.Error(err)
-			if sleep(watcher.ctx) != nil {
-				return
-			}
-			continue
-		}
-		if err := watcher.readEvent(reader); err != nil {
-			log.Error(err)
-		}
-		_ = reader.Close()
-		if sleep(watcher.ctx) != nil {
-			return
-		}
-	}
+func (watcher *EventReader) commitReadOffset(offset int64) error {
+	return watcher.session.SetReadOffset(offset)
 }
 
 func sleep(ctx context.Context, duration ...time.Duration) error {
