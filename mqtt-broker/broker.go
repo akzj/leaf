@@ -236,6 +236,8 @@ func (broker *Broker) handleConnection(conn net.Conn) {
 	}
 	if connectPacket.Keepalive == 0 {
 		connectPacket.Keepalive = broker.DefaultKeepalive
+	} else if connectPacket.Keepalive < broker.MinKeepalive {
+		connectPacket.Keepalive = broker.MinKeepalive
 	}
 	sess, err := newSession(broker, connectPacket.Keepalive, conn, broker.client, connectPacket.ClientIdentifier)
 	if err != nil {

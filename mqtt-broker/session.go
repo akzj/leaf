@@ -301,6 +301,7 @@ func (sess *session) handleOutPublishPacket(packet *packets.PublishPacket) {
 			sess.log.Errorf("%+v", err)
 			_ = sess.Close()
 		}
+		//todo spit qos0,qos1 stream
 		atomic.StoreInt64(&sess.ackOffset, sess.offset)
 	case 1:
 		if err := sess.sendPacket(packet); err != nil {
@@ -348,6 +349,7 @@ func (sess *session) handleDisconnectPacket(_ *packets.DisconnectPacket) error {
 }
 
 func (sess *session) handlePingReqPacket(_ *packets.PingreqPacket) error {
+	fmt.Println("handlePingReqPacket")
 	return sess.sendPacket(packets.NewControlPacket(packets.Pingresp))
 }
 

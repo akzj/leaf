@@ -8,6 +8,7 @@ type Options struct {
 	BindPort            int          `json:"bind_port"`
 	BindTLSPort         int          `json:"bind_tls_port"`
 	DefaultKeepalive    uint16       `json:"default_keepalive"`
+	MinKeepalive        uint16       `json:"min_keepalive"`
 	CheckpointEventSize int64        `json:"checkpoint_event_size"`
 	SnapshotPath        string       `json:"snapshot_path"`
 	BrokerId            int64        `json:"broker_id"`
@@ -22,6 +23,7 @@ func DefaultOptions() Options {
 		BindPort:            8000,
 		BindTLSPort:         0,
 		DefaultKeepalive:    300,
+		MinKeepalive:        60,
 		CheckpointEventSize: 100,
 		SnapshotPath:        "mqtt-broker-snapshot",
 		BrokerId:            8000,
