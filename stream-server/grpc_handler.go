@@ -52,21 +52,16 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 			log.Warn(err)
 			return err
 		}
-		server.store.WriteRequest(request, func(offset int64, err error) {
-			if err != nil {
-				log.Warn(err)
-				if err == sstore.ErrOffset {
-					requestError = status.Error(codes.FailedPrecondition, err.Error())
-					return
-				}
-				err = status.Error(codes.ResourceExhausted, err.Error())
-				return
-			}
-			err = stream.Send(&proto.WriteStreamResponse{
+		server.store.WriteRequest(request, func(offset int64, writerErr error) {
+			response := &proto.WriteStreamResponse{
+				StreamId:  request.StreamId,
 				Offset:    offset,
 				RequestId: request.RequestId,
-			})
-			if err != nil {
+			}
+			if writerErr != nil {
+				response.Err = writerErr.Error()
+			}
+			if err = stream.Send(response); err != nil {
 				log.Warn(err)
 				requestError = err
 			}

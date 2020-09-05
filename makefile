@@ -4,7 +4,8 @@ build:build-meta-server \
 	build-stream-server \
 	build-cli\
 	build-example-writer\
-	build-example-reader
+	build-example-reader\
+	build-mqtt-broker
 
 
 build-example-reader:
@@ -24,6 +25,9 @@ build-stream-server:
 build-meta-server:
 	@/bin/echo "build meta-server"
 	@go build -o bin/meta-server cmd/meta-server/meta-server.go
+build-mqtt-broker:
+	@/bin/echo "build mqtt-broker"
+	@go build -o bin/mqtt-broker cmd/mqtt-broker/mqtt-broker.go
 
 generate:
 	@cd .. && protoc --go_out=plugins=grpc:. streamIO/proto/*.proto &&\

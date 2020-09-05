@@ -47,23 +47,23 @@ type Broker struct {
 	listener []net.Listener
 }
 
-func New(options Options) (*Broker, error) {
+func New(options Options) *Broker {
 	ctx, cancel := context.WithCancel(context.Background())
 	metaServerClient, err := client.NewMetaServiceClient(ctx, options.MetaServerAddr)
 	if err != nil {
-		return nil, err
+		log.Fatalf("%+v", err)
 	}
 	cli := client.NewClient(metaServerClient)
 	if _, err := cli.GetOrCreateStream(ctx, MQTTEventStream); err != nil {
-		return nil, err
+		log.Fatalf("%+v", err)
 	}
 	sess, err := cli.NewStreamSession(ctx, options.BrokerId, MQTTEventStream)
 	if err != nil {
-		return nil, err
+		log.Fatalf("%+v", err)
 	}
 	eventWriter, err := sess.NewWriter()
 	if err != nil {
-		return nil, err
+		log.Fatalf("%+v", err)
 	}
 
 	eventQueue := block_queue.NewQueue(128)
@@ -71,7 +71,7 @@ func New(options Options) (*Broker, error) {
 		eventQueue.Push(message)
 	})
 	if err != nil {
-		return nil, err
+		log.Fatalf("%+v", err)
 	}
 
 	broker := &Broker{
@@ -92,15 +92,14 @@ func New(options Options) (*Broker, error) {
 		cancel:         cancel,
 	}
 
-	return broker, nil
+	return broker
 }
 
 func (broker *Broker) Start() error {
 	if err := broker.snapshot.reloadSnapshot(broker); err != nil {
 		return err
 	}
-	broker.clientListenLoop()
-	return nil
+	return broker.clientListenLoop()
 }
 
 func (broker *Broker) getSubscribeTree() *Tree {
@@ -269,9 +268,10 @@ func (broker *Broker) clientListenLoop() error {
 	if err != nil {
 		return err
 	}
-	for _, listener := range listeners {
+	for _, listener := range listeners[1:] {
 		go broker.serve(listener)
 	}
+	broker.serve(listeners[0])
 	return nil
 }
 
@@ -360,7 +360,7 @@ func (broker *Broker) processEventLoop() {
 			broker.eventOffset = event.offset
 			broker.treeChanges++
 		}
-		if broker.treeChanges > broker.SubTreeCheckpointEventSize {
+		if broker.treeChanges > broker.CheckpointEventSize {
 			if atomic.CompareAndSwapInt32(&broker.isCheckpoint, 0, 1) == false {
 				continue
 			}
@@ -458,7 +458,7 @@ func (broker *Broker) checkpoint(clone *Tree, offset int64) error {
 		log.Error(err)
 		return err
 	}
-	if err := broker.eventReader.commitReadOffset(offset);err != nil{
+	if err := broker.eventReader.commitReadOffset(offset); err != nil {
 		log.Error(err)
 	}
 	return nil
