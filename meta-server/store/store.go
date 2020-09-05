@@ -42,7 +42,7 @@ func (store *Store) CreateStream(name string) (item *StreamInfoItem, create bool
 	store.metaDataItemLocker.Lock()
 	defer store.metaDataItemLocker.Unlock()
 	var exist = false
-	streamInfoItem := NewStreamInfoItem(0, name)
+	streamInfo := NewStreamInfoItem(0, name)
 	heartbeatItems, err := store.ListStreamServerHeartbeat()
 	if err != nil {
 		return nil, false, err
@@ -54,7 +54,8 @@ func (store *Store) CreateStream(name string) (item *StreamInfoItem, create bool
 		return heartbeatItems[i].Base.Id < heartbeatItems[j].Base.Id
 	})
 	err = store.db.Update(func(tx mmdb.Transaction) error {
-		if tx.Get(streamInfoItem) != nil {
+		if item := tx.Get(streamInfo); item != nil {
+			streamInfo = item.(*StreamInfoItem)
 			exist = true
 			return nil
 		}
@@ -66,12 +67,12 @@ func (store *Store) CreateStream(name string) (item *StreamInfoItem, create bool
 		} else {
 			metaDataItem = item.(*MetaDataItem)
 		}
-		streamInfoItem.StreamId = metaDataItem.NextStreamId
-		streamInfoItem.StreamServerId =
-			heartbeatItems[streamInfoItem.StreamId%int64(len(heartbeatItems))].Base.Id
+		streamInfo.StreamId = metaDataItem.NextStreamId
+		streamInfo.StreamServerId =
+			heartbeatItems[streamInfo.StreamId%int64(len(heartbeatItems))].Base.Id
 		metaDataItem.NextStreamId++
 
-		tx.ReplaceOrInsert(streamInfoItem)
+		tx.ReplaceOrInsert(streamInfo)
 		tx.ReplaceOrInsert(metaDataItem)
 		return nil
 	})
@@ -80,9 +81,9 @@ func (store *Store) CreateStream(name string) (item *StreamInfoItem, create bool
 		return nil, false, errors.WithStack(err)
 	}
 	if exist {
-		return streamInfoItem, false, nil
+		return streamInfo, false, nil
 	}
-	return streamInfoItem, true, nil
+	return streamInfo, true, nil
 }
 
 func (store *Store) GetStream(name string) (*StreamInfoItem, error) {
