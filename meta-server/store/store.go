@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Store struct {
@@ -299,11 +300,17 @@ func (store *Store) GetOrCreateMQTTSession(identifier string) (*MQTTSessionItem,
 		item = tx.Get(&MQTTSessionItem{ClientIdentifier: identifier})
 		if item == nil {
 			create = true
-			var streamID int64
-			var streamServerID int64
-			var streamName string
-			for retry := 0; retry < 10; retry++ {
-				streamName = strings.ReplaceAll(uuid.New().String(), "-", "")
+			session := &MQTTSessionItem{
+				Qos1StreamInfo:   nil,
+				Qos0StreamInfo:   nil,
+				SessionId:        0,
+				ClientIdentifier: identifier,
+				CreateTs:         time.Now().Unix(),
+				LastOnlineTs:     time.Now().Unix(),
+				Topics:           nil,
+			}
+			for retry := 0; retry < 1000; retry++ {
+				streamName := strings.ReplaceAll(uuid.New().String(), "-", "")
 				info, create, err := store.CreateStream(streamName)
 				if err != nil {
 					log.Error(err)
@@ -313,19 +320,14 @@ func (store *Store) GetOrCreateMQTTSession(identifier string) (*MQTTSessionItem,
 					log.Warnf("create stream %s exist ....", streamName)
 					continue
 				}
-				streamID = info.StreamId
-				streamServerID = info.StreamServerId
+				if session.Qos0StreamInfo == nil {
+					session.Qos0StreamInfo = info
+					continue
+				}
+				session.Qos1StreamInfo = info
 				break
 			}
-			item = &MQTTSessionItem{
-				StreamId:         streamID,
-				SessionId:        streamID,
-				StreamServerId:   streamServerID,
-				ClientIdentifier: identifier,
-				StreamName:       streamName,
-				Topics:           nil,
-			}
-
+			session.SessionId = session.Qos1StreamInfo.StreamId
 			tx.ReplaceOrInsert(item)
 		}
 		return nil
@@ -341,6 +343,11 @@ func (store *Store) DeleteMQTTClientSession(identifier string) (*MQTTSessionItem
 	var item mmdb.Item
 	err := store.db.Update(func(tx mmdb.Transaction) error {
 		item = tx.Delete(&MQTTSessionItem{ClientIdentifier: identifier})
+		if item != nil {
+			session := item.(*MQTTSessionItem)
+			tx.Delete(session.Qos0StreamInfo)
+			tx.Delete(session.Qos1StreamInfo)
+		}
 		return nil
 	})
 	if err != nil {
