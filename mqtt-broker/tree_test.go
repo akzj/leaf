@@ -48,7 +48,7 @@ func TestNextToken(t *testing.T) {
 }
 
 func TestNewTree(t *testing.T) {
-	tree := NewTree()
+	tree := NewTopicTree()
 
 	s := newSub(1, "1/2/3/4/5")
 	tree.Insert(s)
@@ -80,7 +80,7 @@ func TestNewTree(t *testing.T) {
 }
 
 func TestMatch(t *testing.T) {
-	tree := NewTree()
+	tree := NewTopicTree()
 	tree.Insert(newSub(1, "+/+"))
 	tree.Insert(newSub(2, "/+"))
 	tree.Insert(newSub(3, "/+/#"))
@@ -92,7 +92,7 @@ func TestMatch(t *testing.T) {
 }
 
 func TestClone(t *testing.T) {
-	tree := NewTree()
+	tree := NewTopicTree()
 	tree.Insert(newSub(1, "1/2/3/4/5/6"))
 	tree.Insert(newSub(2, "1/2/3/4/5"))
 	tree.Insert(newSub(3, "1/2/3/4"))
@@ -123,7 +123,7 @@ func TestClone(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	tree := NewTree()
+	tree := NewTopicTree()
 
 	s1 := newSub(1, "1/2/3/4/5/6")
 	s2 := newSub(2, "1/2/3/4/5")

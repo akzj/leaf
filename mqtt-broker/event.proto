@@ -9,7 +9,8 @@ message Event {
   enum Type {
     SubscribeEvent = 0;
     UnSubscribeEvent = 1;
-    RetainMessage = 2;
+    RetainMessageEvent = 2;
+    ClientStatusChangeEvent = 3;
   }
   Type type = 2 ;
 }
@@ -18,6 +19,7 @@ message SubscribeEvent{
   int64 stream_id = 1;
   int64 session_id = 2;
   int64 stream_server_id = 3;
+  string client_identifier = 5;
   map<string, int32> topic = 4;
 }
 
@@ -25,9 +27,19 @@ message UnSubscribeEvent{
   int64 stream_id = 1;
   int64 session_id = 2;
   int64 stream_server_id = 3;
+  string client_identifier = 5;
   repeated  string  topic = 4;
 }
 
-message RetainMessage {
+message RetainMessageEvent {
   bytes data = 1;
+}
+
+message ClientStatusChangeEvent{
+  string client_identifier = 1;
+  enum Status{
+    Online = 0;
+    Offline = 1;
+  };
+  Status status = 2;
 }

@@ -12,7 +12,7 @@ import (
 )
 
 const MQTTEventStream = "$streamIO-mqtt-broker-event"
-const MaxEventSize = 1024 * 1024
+const MaxEventSize = 1024 * 1024 * 128
 
 type EventReader struct {
 	ctx       context.Context
@@ -96,8 +96,10 @@ func (eReader *EventReader) readEventLoop() {
 			message = &SubscribeEvent{}
 		case Event_UnSubscribeEvent:
 			message = &UnSubscribeEvent{}
-		case Event_RetainMessage:
-			message = &RetainMessage{}
+		case Event_RetainMessageEvent:
+			message = &RetainMessageEvent{}
+		case Event_ClientStatusChangeEvent:
+			message = &ClientStatusChangeEvent{}
 		default:
 			panic(fmt.Sprintf("unknown event type %d %s", event.Type, event.Data))
 		}

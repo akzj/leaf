@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"github.com/eclipse/paho.mqtt.golang/packets"
 	"github.com/golang/protobuf/proto"
+	"github.com/google/btree"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -82,8 +84,8 @@ func (s *Snapshot) reloadSnapshot(broker *Broker) error {
 				return err
 			}
 			broker.insertSubscriber2Tree(broker.getSubscribeTree(), &subEvent)
-		case Event_RetainMessage:
-			var message RetainMessage
+		case Event_RetainMessageEvent:
+			var message RetainMessageEvent
 			if err := proto.Unmarshal(event.Data, &message); err != nil {
 				log.Error(err)
 				return err
@@ -91,11 +93,18 @@ func (s *Snapshot) reloadSnapshot(broker *Broker) error {
 			if err := broker.insertRetainMessage2Tree(broker.getSubscribeTree(), &message); err != nil {
 				return err
 			}
+		case Event_ClientStatusChangeEvent:
+			var message ClientStatusChangeEvent
+			if err := proto.Unmarshal(event.Data, &message); err != nil {
+				log.Error(err)
+				return err
+			}
+			broker.handleClientStatusChangeEvent(&message)
 		}
 	}
 }
 
-func (s *Snapshot) WriteSnapshot(header SnapshotHeader, tree *Tree) error {
+func (s *Snapshot) WriteSnapshot(header SnapshotHeader, topicTree *TopicTree, metaTree *btree.BTree) error {
 	_ = os.MkdirAll(s.path, 0777)
 	filename := filepath.Join(s.path, snapExtTmp)
 	file, err := os.Create(filename)
@@ -116,7 +125,21 @@ func (s *Snapshot) WriteSnapshot(header SnapshotHeader, tree *Tree) error {
 		log.Error(err.Error())
 		return err
 	}
-	tree.Walk(func(path string, subscribers map[int64]Subscriber) bool {
+
+	writerEvent := func(event *Event) error {
+		data, err = proto.Marshal(event)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err = binary.Write(writer, binary.BigEndian, int32(len(data))); err != nil {
+			return err
+		}
+		if _, err = writer.Write(data); err != nil {
+			return err
+		}
+		return nil
+	}
+	topicTree.Walk(func(path string, subscribers map[int64]Subscriber) bool {
 		for _, iter := range subscribers {
 			sub := iter.(*subscriber)
 			var subEvent = &SubscribeEvent{
@@ -129,16 +152,8 @@ func (s *Snapshot) WriteSnapshot(header SnapshotHeader, tree *Tree) error {
 			if err != nil {
 				log.Fatal(err)
 			}
-			data, err = proto.Marshal(&Event{Data: data, Type: Event_SubscribeEvent})
-			if err != nil {
-				log.Fatal(err)
-			}
-			if err = binary.Write(writer, binary.BigEndian, int32(len(data))); err != nil {
-				log.Error(err)
-				return false
-			}
-			if _, err = writer.Write(data); err != nil {
-				log.Error(err)
+			if err := writerEvent(&Event{Data: data, Type: Event_SubscribeEvent}); err != nil {
+				log.Errorf("%+v", err)
 				return false
 			}
 		}
@@ -148,21 +163,13 @@ func (s *Snapshot) WriteSnapshot(header SnapshotHeader, tree *Tree) error {
 		return err
 	}
 
-	tree.RangeRetainMessage(func(packet *packets.PublishPacket) bool {
+	topicTree.RangeRetainMessage(func(packet *packets.PublishPacket) bool {
 		var buffer bytes.Buffer
 		if err = packet.Write(&buffer); err != nil {
 			log.Fatal(err)
 		}
-		data, err = proto.Marshal(&Event{Data: buffer.Bytes(), Type: Event_RetainMessage})
-		if err != nil {
-			log.Fatal(err.Error())
-		}
-		if err = binary.Write(writer, binary.BigEndian, int32(len(data))); err != nil {
+		if err = writerEvent(&Event{Data: buffer.Bytes(), Type: Event_RetainMessageEvent}); err != nil {
 			log.Error(err.Error())
-			return false
-		}
-		if _, err = writer.Write(data); err != nil {
-			log.Error(err)
 			return false
 		}
 		return true
@@ -170,6 +177,28 @@ func (s *Snapshot) WriteSnapshot(header SnapshotHeader, tree *Tree) error {
 	if err != nil {
 		return err
 	}
+
+	metaTree.Descend(func(item btree.Item) bool {
+		var event Event
+		switch obj := item.(type) {
+		case *subscriberStatus:
+			var err error
+			event.Type = Event_ClientStatusChangeEvent
+			event.Data, err = proto.Marshal(&ClientStatusChangeEvent{Status:
+			ClientStatusChangeEvent_Status(atomic.LoadInt32((*int32)(obj.status))),
+				ClientIdentifier: obj.clientIdentifier})
+			if err != nil {
+				log.Fatal(err)
+			}
+		default:
+			log.Fatalf("unknown %+v", obj)
+		}
+		if err = writerEvent(&event); err != nil {
+			log.Error(err.Error())
+			return false
+		}
+		return true
+	})
 	if err = writer.Flush(); err != nil {
 		log.Error(err)
 		return err

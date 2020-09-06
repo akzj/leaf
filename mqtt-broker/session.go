@@ -64,31 +64,36 @@ func newSession(broker *Broker,
 
 	info, create, err := client.GetOrCreateMQTTSession(ctx, clientIdentifier)
 	if err != nil {
-		log.Error(err.Error())
+		log.Errorf("%+v", err)
 		return nil, err
 	}
 	pprint(info)
 	streamSession, err := client.NewStreamSession2(ctx, info.SessionId, info.StreamId, info.StreamServerId)
 	if err != nil {
-		log.Error(err.Error())
+		log.Errorf("%+v", err)
 		return nil, err
 	}
 	offset, err := streamSession.GetReadOffset()
 	if err != nil {
-		log.Error(err)
+		log.Errorf("%+v", err)
 		return nil, err
 	}
 	reader, err := streamSession.NewReader()
 	if err != nil {
-		log.Error(err)
+		log.Errorf("%+v", err)
 		return nil, err
 	}
 	if offset != 0 {
 		if _, err := reader.Seek(offset, io.SeekStart); err != nil {
 			_ = reader.Close()
-			log.Error(err)
+			log.Errorf("%+v", err)
 			return nil, err
 		}
+	}
+	if err := broker.handleClientStatusChange(
+		info.ClientIdentifier, ClientStatusChangeEvent_Online); err != nil {
+		log.Errorf("%+v", err)
+		return nil, err
 	}
 	return &session{
 		MQTTSessionInfo: info,
@@ -218,8 +223,8 @@ func (sess *session) sendPacket2Subscribers(packet *packets.PublishPacket) error
 			sub.writePacket(packet, func(err error) {
 				if err != nil {
 					sess.log.Warn(err)
+					atomic.StorePointer(&errPointer, unsafe.Pointer(&err))
 				}
-				atomic.StorePointer(&errPointer, unsafe.Pointer(&err))
 				wg.Done()
 			})
 		}
@@ -365,6 +370,10 @@ func (sess *session) handleUnsubscribePacket(packet *packets.UnsubscribePacket) 
 func (sess *session) Close() error {
 	var err error
 	sess.closeOnce.Do(func() {
+		if err := sess.broker.handleClientStatusChange(
+			sess.MQTTSessionInfo.ClientIdentifier, ClientStatusChangeEvent_Offline); err != nil {
+			sess.log.Errorf("%+v", err)
+		}
 		if sess.willMessage != nil {
 			if err = sess.handlePublishPacket(sess.willMessage); err != nil {
 				sess.log.Errorf("%+v", err)

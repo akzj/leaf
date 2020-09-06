@@ -11,9 +11,9 @@ import (
 	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/eclipse/paho.mqtt.golang/packets"
 	"github.com/golang/protobuf/proto"
+	"github.com/google/btree"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -31,7 +31,8 @@ type Broker struct {
 	sessionsLocker sync.Mutex
 	sessions       map[string]*session
 
-	tree unsafe.Pointer
+	topicTree unsafe.Pointer
+	metaTree  *btree.BTree
 
 	eventReader *EventReader
 	eventQueue  *block_queue.Queue
@@ -94,7 +95,7 @@ func New(options Options) *Broker {
 		tlsConfig:      nil,
 		sessionsLocker: sync.Mutex{},
 		sessions:       map[string]*session{},
-		tree:           unsafe.Pointer(NewTree()),
+		topicTree:      unsafe.Pointer(NewTopicTree()),
 		eventReader:    eventWatcher,
 		eventQueue:     eventQueue,
 		client:         cli,
@@ -122,12 +123,12 @@ func (broker *Broker) Start() error {
 	return nil
 }
 
-func (broker *Broker) getSubscribeTree() *Tree {
-	return (*Tree)(atomic.LoadPointer(&broker.tree))
+func (broker *Broker) getSubscribeTree() *TopicTree {
+	return (*TopicTree)(atomic.LoadPointer(&broker.topicTree))
 }
 
-func (broker *Broker) setSubscribeTree(tree *Tree) {
-	atomic.StorePointer(&broker.tree, unsafe.Pointer(tree))
+func (broker *Broker) setSubscribeTree(tree *TopicTree) {
+	atomic.StorePointer(&broker.topicTree, unsafe.Pointer(tree))
 }
 
 func (broker *Broker) newListener() ([]net.Listener, error) {
@@ -304,6 +305,10 @@ func (broker *Broker) handleEvent(packet packets.ControlPacket) {
 	broker.eventQueue.Push(packet)
 }
 
+func (broker Broker) getOrCreateSubscriber() {
+
+}
+
 func (broker *Broker) newSubscriber(event *SubscribeEvent) ([]Subscriber, error) {
 	writer, err := broker.client.NewStreamWriter(context.Background(), event.StreamId, event.StreamServerId)
 	if err != nil {
@@ -329,7 +334,7 @@ func (broker *Broker) handleSubscribeEvent(event *SubscribeEvent) {
 	broker.setSubscribeTree(tree)
 }
 
-func (broker *Broker) insertSubscriber2Tree(tree *Tree, event *SubscribeEvent) {
+func (broker *Broker) insertSubscriber2Tree(tree *TopicTree, event *SubscribeEvent) {
 	subs, err := broker.newSubscriber(event)
 	if err != nil {
 		log.Error(err.Error())
@@ -349,12 +354,13 @@ func (broker *Broker) handleUnSubscribeEvent(event *UnSubscribeEvent) {
 	broker.setSubscribeTree(tree)
 }
 
-func (broker *Broker) handleRetainMessage(event *RetainMessage) {
+func (broker *Broker) handleRetainMessageEvent(event *RetainMessageEvent) {
 	tree := broker.getSubscribeTree().Clone()
 	_ = broker.insertRetainMessage2Tree(tree, event)
 	broker.setSubscribeTree(tree)
 }
-func (broker *Broker) insertRetainMessage2Tree(tree *Tree, event *RetainMessage) error {
+
+func (broker *Broker) insertRetainMessage2Tree(tree *TopicTree, event *RetainMessageEvent) error {
 	var buffer = bytes.NewReader(event.Data)
 	packet, err := packets.ReadPacket(buffer)
 	if err != nil {
@@ -375,8 +381,10 @@ func (broker *Broker) processEventLoop() {
 				broker.handleSubscribeEvent(event)
 			case *UnSubscribeEvent:
 				broker.handleUnSubscribeEvent(event)
-			case *RetainMessage:
-				broker.handleRetainMessage(event)
+			case *RetainMessageEvent:
+				broker.handleRetainMessageEvent(event)
+			case *ClientStatusChangeEvent:
+				broker.handleClientStatusChangeEvent(event)
 			default:
 				log.Fatal("unknown event %+v", event)
 			}
@@ -399,30 +407,29 @@ func (broker *Broker) processEventLoop() {
 	}
 }
 
-func (broker *Broker) getSnapshotFile() (io.WriteCloser, error) {
-	return nil, nil
-}
-
-func (broker *Broker) handleUnSubscribePacket(MqttSessionItem *store.MQTTSessionItem,
+func (broker *Broker) handleUnSubscribePacket(sessionItem *store.MQTTSessionItem,
 	packet *packets.UnsubscribePacket) error {
 	event := UnSubscribeEvent{
-		StreamId:       MqttSessionItem.StreamId,
-		SessionId:      MqttSessionItem.SessionId,
-		StreamServerId: MqttSessionItem.StreamId,
-		Topic:          packet.Topics,
+		StreamId:         sessionItem.StreamId,
+		SessionId:        sessionItem.SessionId,
+		StreamServerId:   sessionItem.StreamId,
+		ClientIdentifier: sessionItem.ClientIdentifier,
+		Topic:            packet.Topics,
 	}
-	return broker.writeEvent(&event)
+	return broker.sendEvent(&event)
 }
 
-func (broker *Broker) writeEvent(message proto.Message) error {
+func (broker *Broker) sendEvent(message proto.Message) error {
 	event := Event{}
 	switch typ := message.(type) {
 	case *SubscribeEvent:
 		event.Type = Event_SubscribeEvent
 	case *UnSubscribeEvent:
 		event.Type = Event_UnSubscribeEvent
-	case *RetainMessage:
-		event.Type = Event_RetainMessage
+	case *RetainMessageEvent:
+		event.Type = Event_RetainMessageEvent
+	case *ClientStatusChangeEvent:
+		event.Type = Event_ClientStatusChangeEvent
 	default:
 		panic("unknown message type" + typ.String())
 	}
@@ -457,32 +464,33 @@ func (broker *Broker) handleSubscribePacket(SessionItem *store.MQTTSessionItem,
 	packet *packets.SubscribePacket) error {
 	fmt.Println(SessionItem)
 	event := SubscribeEvent{
-		StreamId:       SessionItem.StreamId,
-		SessionId:      SessionItem.SessionId,
-		StreamServerId: SessionItem.StreamServerId,
-		Topic:          map[string]int32{},
+		StreamId:         SessionItem.StreamId,
+		SessionId:        SessionItem.SessionId,
+		StreamServerId:   SessionItem.StreamServerId,
+		ClientIdentifier: SessionItem.ClientIdentifier,
+		Topic:            map[string]int32{},
 	}
 	for index, topic := range packet.Topics {
 		qos := packet.Qoss[index]
 		event.Topic[topic] = int32(qos)
 	}
-	return broker.writeEvent(&event)
+	return broker.sendEvent(&event)
 }
 
 func (broker *Broker) handleRetainPacket(packet *packets.PublishPacket) error {
 	var buffer bytes.Buffer
 	_ = packet.Write(&buffer)
-	event := RetainMessage{
+	event := RetainMessageEvent{
 		Data: buffer.Bytes(),
 	}
-	return broker.writeEvent(&event)
+	return broker.sendEvent(&event)
 }
 
-func (broker *Broker) checkpoint(clone *Tree, offset int64) error {
+func (broker *Broker) checkpoint(clone *TopicTree, offset int64) error {
 	err := broker.snapshot.WriteSnapshot(SnapshotHeader{
 		TS:     time.Now(),
 		Offset: offset,
-	}, clone)
+	}, clone, broker.metaTree)
 	if err != nil {
 		log.Error(err)
 		return err
@@ -491,4 +499,30 @@ func (broker *Broker) checkpoint(clone *Tree, offset int64) error {
 		log.Error(err)
 	}
 	return nil
+}
+
+func (broker *Broker) handleClientStatusChange(identifier string, offline ClientStatusChangeEvent_Status) error {
+	event := &ClientStatusChangeEvent{
+		ClientIdentifier: identifier,
+		Status:           offline,
+	}
+	return broker.sendEvent(event)
+}
+
+func (broker *Broker) handleClientStatusChangeEvent(event *ClientStatusChangeEvent) {
+	item := broker.metaTree.Get(&subscriberStatus{
+		clientIdentifier: event.ClientIdentifier,
+		status:           &event.Status,
+	})
+	if item == nil {
+		//copy on write
+		metaTree := broker.metaTree.Clone()
+		metaTree.ReplaceOrInsert(&subscriberStatus{
+			clientIdentifier: event.ClientIdentifier,
+			status:           &event.Status,
+		})
+		broker.metaTree = metaTree
+	} else {
+		atomic.StoreInt32((*int32)(item.(*subscriberStatus).status), int32(event.Status))
+	}
 }

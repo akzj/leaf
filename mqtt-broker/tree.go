@@ -10,6 +10,7 @@ type Subscriber interface {
 	ID() int64
 	Topic() string
 	Qos() int32
+	Online() bool
 	writePacket(packet *packets.PublishPacket, callback func(err error))
 }
 
@@ -159,7 +160,7 @@ func (n *Node) mutableNext(token string) *Node {
 	return next
 }
 
-type Tree struct {
+type TopicTree struct {
 	cow  *copyOnWrite
 	root *Node
 }
@@ -172,24 +173,24 @@ func nextToken(topic string) (token string, remain string) {
 	return topic[:index], topic[index+1:]
 }
 
-func NewTree() *Tree {
+func NewTopicTree() *TopicTree {
 	Cow := new(copyOnWrite)
 	root := newNode("")
 	root.CoW = Cow
-	return &Tree{
+	return &TopicTree{
 		cow:  Cow,
 		root: root,
 	}
 }
 
-func (tree *Tree) Insert(sub Subscriber) {
+func (tree *TopicTree) Insert(sub Subscriber) {
 	token, remain := nextToken(sub.Topic())
 	tree.root = tree.cow.mutableNode(tree.root)
 	tree.root.getOrCreateNode(0, token, remain, "").
 		subscribers[sub.ID()] = sub
 }
 
-func (tree *Tree) UpdateRetainPacket(packet *packets.PublishPacket) {
+func (tree *TopicTree) UpdateRetainPacket(packet *packets.PublishPacket) {
 	token, remain := nextToken(packet.TopicName)
 	tree.root = tree.cow.mutableNode(tree.root)
 	node := tree.root.getOrCreateNode(0, token, remain, "")
@@ -200,22 +201,22 @@ func (tree *Tree) UpdateRetainPacket(packet *packets.PublishPacket) {
 	}
 }
 
-func (tree *Tree) Match(topic string) []map[int64]Subscriber {
+func (tree *TopicTree) Match(topic string) []map[int64]Subscriber {
 	token, remain := nextToken(topic)
 	return tree.root.match(token, remain)
 }
 
-func (tree *Tree) Clone() *Tree {
+func (tree *TopicTree) Clone() *TopicTree {
 	cow := *tree.cow
 	tree.cow = &cow
-	clone := &Tree{cow: new(copyOnWrite), root: tree.root}
+	clone := &TopicTree{cow: new(copyOnWrite), root: tree.root}
 	return clone
 }
 
-func (tree *Tree) Walk(f func(path string, subscribers map[int64]Subscriber) bool) {
+func (tree *TopicTree) Walk(f func(path string, subscribers map[int64]Subscriber) bool) {
 	tree.root.walk(f)
 }
-func (tree *Tree) RangeRetainMessage(f func(packet *packets.PublishPacket) bool) {
+func (tree *TopicTree) RangeRetainMessage(f func(packet *packets.PublishPacket) bool) {
 	tree.root.rangeRetainMessage(f)
 }
 
@@ -234,7 +235,7 @@ func (stack *nodeStack) Pop() *Node {
 	return node
 }
 
-func (tree *Tree) Delete(subscriber Subscriber) {
+func (tree *TopicTree) Delete(subscriber Subscriber) {
 	tree.root = tree.cow.mutableNode(tree.root)
 	next := tree.root
 	var stack = new(nodeStack)
