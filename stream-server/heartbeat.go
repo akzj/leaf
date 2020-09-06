@@ -23,39 +23,36 @@ func (server *StreamServer) GetMetaServiceClient(ctx context.Context) proto.Meta
 }
 
 func (server *StreamServer) sendHeartbeat(client proto.MetaServiceClient) {
-	stream, err := client.StreamServerHeartbeat(server.ctx)
-	if err != nil {
-		//todo log error
-		return
-	}
-	tick := time.NewTicker(server.Options.HeartbeatInterval)
-	defer func() {
-		tick.Stop()
-		if err := stream.CloseSend(); err != nil {
-			log.Warn(err)
-		}
-	}()
+	var stream proto.MetaService_StreamServerHeartbeatClient
 	for {
 		select {
-		case <-tick.C:
+		case <-time.Tick(server.Options.HeartbeatInterval):
 		case <-server.ctx.Done():
-			log.Warn(err)
+			log.Warn(server.ctx.Err())
 			return
 		}
+		if stream == nil {
+			var err error
+			if stream, err = client.StreamServerHeartbeat(server.ctx); err != nil {
+				log.Errorf("%+v", err)
+				continue
+			}
+		}
 		now := time.Now()
-		var heartbeatItem store.StreamServerHeartbeatItem
-		heartbeatItem.Base = server.ServerInfoBase
-		heartbeatItem.Timestamp = &timestamp.Timestamp{
+		var heartbeat store.StreamServerHeartbeatItem
+		heartbeat.Base = server.ServerInfoBase
+		heartbeat.Timestamp = &timestamp.Timestamp{
 			Seconds: now.Unix(),
 			Nanos:   0,
 		}
-		if err := stream.Send(&heartbeatItem); err != nil {
+		if err := stream.Send(&heartbeat); err != nil {
 			log.Warn(err)
-			return
+			stream = nil
+			continue
 		}
 		if _, err := stream.Recv(); err != nil {
 			log.Error(err)
-			return
+			stream = nil
 		}
 	}
 }
