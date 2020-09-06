@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -17,7 +18,6 @@ import (
 type streamReader struct {
 	readBuffSize    int64
 	offset          int64
-	streamID        int64
 	rpcStreamReader *rpcStreamReader
 	reader          *bufio.Reader
 	client          proto.StreamServiceClient
@@ -30,7 +30,8 @@ func (s *streamReader) Offset() int64 {
 }
 
 func (s *streamReader) Seek(offset int64, whence int) (int64, error) {
-	stat, err := s.client.GetStreamStat(s.ctx, &proto.GetStreamStatRequest{StreamID: s.streamID})
+	request := &proto.GetStreamStatRequest{StreamID: s.session.streamInfo.StreamId}
+	stat, err := s.client.GetStreamStat(s.ctx, request)
 	if err != nil {
 		if status.Convert(err).Code() == codes.NotFound {
 			return 0, nil
@@ -68,8 +69,8 @@ func (s *streamReader) getBufReader() *bufio.Reader {
 	if s.rpcStreamReader != nil {
 		_ = s.rpcStreamReader.Close()
 	}
-	s.rpcStreamReader = newRpcStreamReader(s.ctx, s.streamID,
-		s.offset, s.readBuffSize, s.client)
+	s.rpcStreamReader = newRpcStreamReader(s.ctx,
+		s.session.streamInfo, s.offset, s.readBuffSize, s.client)
 	s.reader = bufio.NewReader(s.rpcStreamReader)
 	return s.reader
 }
@@ -86,7 +87,7 @@ func (s *streamReader) Close() error {
 }
 
 type rpcStreamReader struct {
-	streamID    int64
+	streamInfo  *store.StreamInfoItem
 	offset      int64
 	bytesToRead int64
 	ctx         context.Context
@@ -99,12 +100,12 @@ type rpcStreamReader struct {
 }
 
 func newRpcStreamReader(ctx context.Context,
-	streamID int64,
+	streamInfo *store.StreamInfoItem,
 	offset int64,
 	minToRead int64,
 	client proto.StreamServiceClient) *rpcStreamReader {
 	reader := &rpcStreamReader{
-		streamID:    streamID,
+		streamInfo:  streamInfo,
 		offset:      offset,
 		bytesToRead: 0,
 		ctx:         nil,
@@ -147,7 +148,7 @@ func (r *rpcStreamReader) rpcRequestLoop() {
 			size = r.maxToRead
 		}
 		stream, err := r.client.ReadStream(r.ctx, &proto.ReadStreamRequest{
-			StreamId: r.streamID,
+			StreamId: r.streamInfo.StreamId,
 			Offset:   r.offset,
 			Size:     size,
 			Watch:    true,

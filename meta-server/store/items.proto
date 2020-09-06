@@ -46,6 +46,6 @@ message MQTTSessionItem {
   int64 session_id = 3;
   string client_identifier = 4;
   int64 create_ts = 5;
-  int64 last_online_ts = 6;
+  int64 access_ts = 6;
   map<string, int32> topics = 7;
 }

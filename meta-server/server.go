@@ -23,8 +23,8 @@ func initLog(options Options) {
 		panic(err.Error())
 	}
 	log.SetOutput(file)
-	log.SetReportCaller(true)
 	log.SetLevel(options.LogLevel)
+	log.SetFormatter(&log.TextFormatter{DisableQuote: true})
 }
 
 func NewMetaServer(options Options) *MetaServer {

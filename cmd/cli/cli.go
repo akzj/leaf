@@ -23,7 +23,7 @@ var ctx = context.Background()
 
 func init() {
 	log.SetOutput(os.Stderr)
-	log.SetReportCaller(true)
+	log.SetFormatter(&log.TextFormatter{DisableQuote: true})
 }
 func addStreamServer(metaServer string, id int64, addr string) error {
 	client, err := client.NewMetaServiceClient(ctx, metaServer)
@@ -83,12 +83,13 @@ func writeStream(metaServer string, streamName string, data string, count int64)
 		client.Close()
 	}()
 
-	if _, err := client.GetOrCreateStream(ctx, streamName); err != nil {
+	info, err := client.GetOrCreateStreamInfoItem(ctx, streamName)
+	if err != nil {
 		log.Error(err.Error())
 		return err
 	}
 
-	session, err := client.NewStreamSession(ctx, 1, streamName)
+	session, err := client.NewStreamSession(ctx, 1, info)
 	if err != nil {
 		log.Error(err)
 		return nil
@@ -134,47 +135,46 @@ func getStreamStat(metaServer string, streamName string) error {
 	if err != nil {
 		panic(err)
 	}
-	client := client.NewClient(msClient)
+	cc := client.NewClient(msClient)
 	defer func() {
-		client.Close()
+		_ = cc.Close()
 	}()
-	id, err := client.GetStreamID(ctx, streamName)
+	streamInfoItem, err := cc.GetStreamInfoItem(ctx, streamName)
 	if err != nil {
 		log.Fatalf("%+v", err)
 	}
-	begin, end, err := client.GetStreamStat(ctx, streamName)
+	begin, end, err := cc.GetStreamStat(ctx, streamInfoItem)
 	if err != nil {
 		log.Fatalf("%+v", err)
 	}
-	fmt.Println("id", id, "begin", begin, "end", end)
+	fmt.Println("id", streamInfoItem, "begin", begin, "end", end)
 	return nil
 }
 
-func readStream(metaServer string, streamName string, size int64, reset bool) error {
+func readStream(metaServer string, streamName string, sessionID int64, size int64, reset bool) error {
 	fmt.Println(metaServer, streamName, size, reset)
 	msClient, err := client.NewMetaServiceClient(ctx, metaServer)
 	if err != nil {
 		panic(err)
 	}
-	client := client.NewClient(msClient)
+	cc := client.NewClient(msClient)
 	defer func() {
-		client.Close()
+		_ = cc.Close()
 	}()
 
-	if id, err := client.GetOrCreateStream(ctx, streamName); err != nil {
+	infoItem, err := cc.GetOrCreateStreamInfoItem(ctx, streamName)
+	if err != nil {
 		log.Error(err.Error())
 		return err
-	} else {
-		fmt.Println(streamName, id)
 	}
 
-	session, err := client.NewStreamSession(ctx, 8000, streamName)
+	session, err := cc.NewStreamSession(ctx, sessionID, infoItem)
 	if err != nil {
 		log.Error(err)
 		return nil
 	}
 	if reset {
-		_, end, err := client.GetStreamStat(ctx, streamName)
+		_, end, err := cc.GetStreamStat(ctx, infoItem)
 		if err != nil {
 			log.Errorf("%+v", err)
 			return nil
@@ -385,7 +385,7 @@ func main() {
 							&cli.StringFlag{
 								Name:  "name",
 								Usage: "stream name",
-								Value: "test-stream-02",
+								Value: "cli-test",
 							},
 							&cli.Int64Flag{
 								Name:  "count",
@@ -412,11 +412,15 @@ func main() {
 								Name:     "name",
 								Usage:    "stream name",
 								Required: false,
-								Value:    "test-stream-02",
+								Value:    "cli-test",
 							},
 							&cli.Int64Flag{
 								Name:  "size",
 								Usage: "read size",
+							},
+							&cli.Int64Flag{
+								Name:  "session_id",
+								Usage: "stream session id",
 							},
 							&cli.BoolFlag{
 								Name:  "reset",
@@ -427,6 +431,7 @@ func main() {
 						Action: func(c *cli.Context) error {
 							return readStream(c.String("ms"),
 								c.String("name"),
+								c.Int64("session_id"),
 								c.Int64("size"),
 								c.Bool("reset"))
 						},

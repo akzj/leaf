@@ -33,10 +33,11 @@ type eventCallback func(message EventWithOffset)
 
 func newEventReader(sessionID int64, client client.Client, callback eventCallback) (*EventReader, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	if _, err := client.GetOrCreateStream(ctx, MQTTEventStream); err != nil {
+	streamInfo, err := client.GetOrCreateStreamInfoItem(ctx, MQTTEventStream)
+	if err != nil {
 		return nil, errors.WithStack(err)
 	}
-	sess, err := client.NewStreamSession(ctx, sessionID, MQTTEventStream)
+	sess, err := client.NewStreamSession(ctx, sessionID, streamInfo)
 	if err != nil {
 		return nil, err
 	}

@@ -143,10 +143,9 @@ func (s *Snapshot) WriteSnapshot(header SnapshotHeader, topicTree *TopicTree, me
 		for _, iter := range subscribers {
 			sub := iter.(*subscriber)
 			var subEvent = &SubscribeEvent{
-				StreamId:       sub.streamID,
-				SessionId:      sub.streamID,
-				StreamServerId: sub.streamServerID,
-				Topic:          map[string]int32{iter.Topic(): iter.Qos()},
+				SessionId:  sub.sessionID,
+				StreamInfo: sub.streamInfo,
+				Topic:      map[string]int32{iter.Topic(): iter.Qos()},
 			}
 			data, err = proto.Marshal(subEvent)
 			if err != nil {
@@ -183,10 +182,9 @@ func (s *Snapshot) WriteSnapshot(header SnapshotHeader, topicTree *TopicTree, me
 		switch obj := item.(type) {
 		case *subscriberStatus:
 			var err error
+			status := ClientStatusChangeEvent_Status(atomic.LoadInt32((*int32)(obj.status)))
 			event.Type = Event_ClientStatusChangeEvent
-			event.Data, err = proto.Marshal(&ClientStatusChangeEvent{Status:
-			ClientStatusChangeEvent_Status(atomic.LoadInt32((*int32)(obj.status))),
-				ClientIdentifier: obj.clientIdentifier})
+			event.Data, err = proto.Marshal(&ClientStatusChangeEvent{Status: status, SessionID: obj.sessionID})
 			if err != nil {
 				log.Fatal(err)
 			}

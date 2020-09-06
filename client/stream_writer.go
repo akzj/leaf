@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -121,7 +122,7 @@ func (writer *streamRequestWriter) Close() error {
 
 type streamWriter struct {
 	locker              sync.Mutex
-	streamID            int64
+	streamInfo          *store.StreamInfoItem
 	buffer              bytes.Buffer
 	writeStreamRequests chan<- writeStreamRequest
 }
@@ -129,7 +130,7 @@ type streamWriter struct {
 func (s *streamWriter) WriteWithCb(data []byte, callback func(err error)) {
 	s.writeStreamRequests <- writeStreamRequest{
 		data:     data,
-		streamID: s.streamID,
+		streamID: s.streamInfo.StreamId,
 		callback: callback,
 	}
 }
@@ -146,7 +147,7 @@ func (s *streamWriter) Write(data []byte) (n int, err error) {
 }
 
 func (s *streamWriter) StreamID() int64 {
-	return s.streamID
+	return s.streamInfo.StreamId
 }
 func (s *streamWriter) Close() error {
 	return s.Flush()

@@ -210,17 +210,21 @@ func (store *Store) GetStreamServerInfo(id int64) (*StreamServerInfoItem, error)
 
 func (store *Store) AddStreamServer(item *StreamServerInfoItem) (*StreamServerInfoItem, error) {
 	err := store.db.Update(func(tx mmdb.Transaction) error {
-		var lastItem mmdb.Item
-		tx.AscendRange(streamServerInfoItemBegin, streamServerInfoItemEnd, func(item mmdb.Item) bool {
-			lastItem = item
-			return true
-		})
-		if lastItem == nil {
-			item.Base.Id = 1
+		if item.Base.Id == 0 {
+			var lastItem mmdb.Item
+			tx.AscendRange(streamServerInfoItemBegin, streamServerInfoItemEnd, func(item mmdb.Item) bool {
+				lastItem = item
+				return true
+			})
+			if lastItem == nil {
+				item.Base.Id = 1
+			} else {
+				item.Base.Id = 1 + lastItem.(*StreamServerInfoItem).Base.Id
+			}
+			tx.ReplaceOrInsert(item)
 		} else {
-			item.Base.Id = 1 + lastItem.(*StreamServerInfoItem).Base.Id
+			tx.ReplaceOrInsert(item)
 		}
-		tx.ReplaceOrInsert(item)
 		return nil
 	})
 	if err != nil {
@@ -306,7 +310,7 @@ func (store *Store) GetOrCreateMQTTSession(identifier string) (*MQTTSessionItem,
 				SessionId:        0,
 				ClientIdentifier: identifier,
 				CreateTs:         time.Now().Unix(),
-				LastOnlineTs:     time.Now().Unix(),
+				AccessTs:         time.Now().Unix(),
 				Topics:           nil,
 			}
 			for retry := 0; retry < 1000; retry++ {
@@ -328,7 +332,8 @@ func (store *Store) GetOrCreateMQTTSession(identifier string) (*MQTTSessionItem,
 				break
 			}
 			session.SessionId = session.Qos1StreamInfo.StreamId
-			tx.ReplaceOrInsert(item)
+			tx.ReplaceOrInsert(session)
+			item = session
 		}
 		return nil
 	})
@@ -374,6 +379,7 @@ func (store *Store) UpdateMQTTClientSession(ClientIdentifier string,
 		for topic, qos := range Subscribe {
 			session.Topics[topic] = qos
 		}
+		session.AccessTs = time.Now().Unix()
 		tx.ReplaceOrInsert(session)
 		return nil
 	})

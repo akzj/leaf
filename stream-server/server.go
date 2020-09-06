@@ -5,22 +5,27 @@ import (
 	MSStore "github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
 	"github.com/akzj/streamIO/stream-server/store"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 )
 
 type StreamServer struct {
 	Options
-	ctx            context.Context
-	cancelFunc     context.CancelFunc
-	wg             sync.WaitGroup
-	ServerInfoBase *MSStore.ServerInfoBase
-	store          *store.Store
-	grpcServer     *grpc.Server
+	ctx               context.Context
+	cancel            context.CancelFunc
+	wg                sync.WaitGroup
+	ServerInfoBase    *MSStore.ServerInfoBase
+	store             *store.Store
+	grpcServer        *grpc.Server
+	metaServiceClient proto.MetaServiceClient
 }
 
 func New(options Options) *StreamServer {
@@ -29,25 +34,51 @@ func New(options Options) *StreamServer {
 	if err != nil {
 		log.Panic(err.Error())
 	}
-	log.SetReportCaller(true)
 	log.SetOutput(file)
 	log.SetLevel(options.LogLevel)
-
+	log.SetFormatter(&log.TextFormatter{DisableQuote: true})
+	ctx, cancel := context.WithCancel(context.Background())
 	return &StreamServer{
-		Options:        options,
-		ServerInfoBase: nil,
-		store:          nil,
+		Options: options,
+		ctx:     ctx,
+		cancel:  cancel,
+		wg:      sync.WaitGroup{},
+		ServerInfoBase: &MSStore.ServerInfoBase{
+			Id:     options.ServerID,
+			Leader: true,
+			Addr:   net.JoinHostPort(options.Host, strconv.Itoa(options.GRPCPort)),
+		},
+		store:             nil,
+		grpcServer:        nil,
+		metaServiceClient: nil,
 	}
 }
 
 func (server *StreamServer) init() error {
-	server.ctx, server.cancelFunc = context.WithCancel(context.Background())
-	server.ServerInfoBase = &MSStore.ServerInfoBase{
-		Id:     server.Options.ServerID,
-		Leader: true,
-		Addr:   server.Options.GRPCBindAddr,
+	ctx, cancel := context.WithTimeout(server.ctx, server.DialMetaServerTimeout)
+	defer cancel()
+
+	conn, err := grpc.DialContext(ctx, server.Options.MetaServerAddr, grpc.WithInsecure())
+	if err != nil {
+		return errors.WithStack(err)
 	}
-	var err error
+	client := proto.NewMetaServiceClient(conn)
+	server.metaServiceClient = client
+
+	if server.AutoAddServer {
+		addStreamServerResponse, err := server.metaServiceClient.AddStreamServer(server.ctx,
+			&proto.AddStreamServerRequest{StreamServerInfoItem: &MSStore.StreamServerInfoItem{
+				Base: server.ServerInfoBase}})
+		if err != nil {
+			if status.Code(err) != codes.AlreadyExists {
+				return errors.WithStack(err)
+			}
+		}
+		if server.ServerInfoBase.Id == 0 {
+			server.ServerInfoBase = addStreamServerResponse.StreamServerInfoItem.Base
+		}
+	}
+
 	server.store, err = store.OpenStore(server.Options.SStorePath)
 	if err != nil {
 		return err
@@ -58,7 +89,8 @@ func (server *StreamServer) init() error {
 }
 
 func (server *StreamServer) startGrpcServer() error {
-	listener, err := net.Listen("tcp", server.GRPCBindAddr)
+	listener, err := net.Listen("tcp",
+		net.JoinHostPort(server.Host, strconv.Itoa(server.GRPCPort)))
 	if err != nil {
 		log.Error(err)
 		return err
@@ -87,7 +119,7 @@ func (server *StreamServer) Stop(ctx context.Context) error {
 		server.wg.Wait()
 		close(ch)
 	}()
-	server.cancelFunc()
+	server.cancel()
 	select {
 	case <-ch:
 		return nil

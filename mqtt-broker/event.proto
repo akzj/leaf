@@ -1,4 +1,5 @@
 syntax = "proto3";
+import "github.com/akzj/streamIO/meta-server/store/items.proto";
 
 package mqtt_broker;
 
@@ -16,19 +17,14 @@ message Event {
 }
 
 message SubscribeEvent{
-  int64 stream_id = 1;
-  int64 session_id = 2;
-  int64 stream_server_id = 3;
-  string client_identifier = 5;
+  int64 session_id = 1;
+  StreamInfoItem stream_info = 2;
   map<string, int32> topic = 4;
 }
 
 message UnSubscribeEvent{
-  int64 stream_id = 1;
   int64 session_id = 2;
-  int64 stream_server_id = 3;
-  string client_identifier = 5;
-  repeated  string  topic = 4;
+    repeated  string  topic = 4;
 }
 
 message RetainMessageEvent {
@@ -36,10 +32,10 @@ message RetainMessageEvent {
 }
 
 message ClientStatusChangeEvent{
-  string client_identifier = 1;
   enum Status{
     Online = 0;
     Offline = 1;
   };
+  int64 sessionID = 1;
   Status status = 2;
 }

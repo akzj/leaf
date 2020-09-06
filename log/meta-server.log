@@ -1,8 +1,0 @@
-time="2020-09-06T00:04:10+08:00" level=info msg="meta-server bind 5000" func="github.com/akzj/streamIO/meta-server.(*MetaServer).Start" file="/home/akzi/go/src/streamIO/meta-server/server.go:46" pid=93060
-time="2020-09-06T00:04:19+08:00" level=error msg="no find stream server ID 1" func="github.com/akzj/streamIO/meta-server.(*MetaServer).StreamServerHeartbeat" file="/home/akzi/go/src/streamIO/meta-server/grpc_handler.go:31"
-time="2020-09-06T00:04:20+08:00" level=error msg="no find stream server ID 1" func="github.com/akzj/streamIO/meta-server.(*MetaServer).StreamServerHeartbeat" file="/home/akzi/go/src/streamIO/meta-server/grpc_handler.go:31"
-time="2020-09-06T00:04:21+08:00" level=error msg="no find stream server ID 1" func="github.com/akzj/streamIO/meta-server.(*MetaServer).StreamServerHeartbeat" file="/home/akzi/go/src/streamIO/meta-server/grpc_handler.go:31"
-time="2020-09-06T00:04:22+08:00" level=error msg="no find stream server ID 1" func="github.com/akzj/streamIO/meta-server.(*MetaServer).StreamServerHeartbeat" file="/home/akzi/go/src/streamIO/meta-server/grpc_handler.go:31"
-time="2020-09-06T00:04:23+08:00" level=error msg="no find stream server ID 1" func="github.com/akzj/streamIO/meta-server.(*MetaServer).StreamServerHeartbeat" file="/home/akzi/go/src/streamIO/meta-server/grpc_handler.go:31"
-time="2020-09-06T00:04:24+08:00" level=error msg="no find stream server ID 1" func="github.com/akzj/streamIO/meta-server.(*MetaServer).StreamServerHeartbeat" file="/home/akzi/go/src/streamIO/meta-server/grpc_handler.go:31"
-time="2020-09-06T00:04:25+08:00" level=error msg="no find stream server ID 1" func="github.com/akzj/streamIO/meta-server.(*MetaServer).StreamServerHeartbeat" file="/home/akzi/go/src/streamIO/meta-server/grpc_handler.go:31"

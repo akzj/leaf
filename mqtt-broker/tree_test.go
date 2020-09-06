@@ -2,6 +2,9 @@ package mqtt_broker
 
 import (
 	"fmt"
+	"github.com/eclipse/paho.mqtt.golang/packets"
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"reflect"
 	"sort"
 	"strings"
@@ -11,6 +14,18 @@ import (
 type Sub struct {
 	id    int64
 	topic string
+}
+
+func (s *Sub) Qos() int32 {
+	panic("implement me")
+}
+
+func (s *Sub) Online() bool {
+	panic("implement me")
+}
+
+func (s *Sub) writePacket(packet *packets.PublishPacket, callback func(err error)) {
+	panic("implement me")
 }
 
 func newSub(id int64, topic string) *Sub {
@@ -148,4 +163,14 @@ func TestDelete(t *testing.T) {
 	if len(clone.root.next) == 0 {
 		t.Fatal("clone.root.next empty")
 	}
+}
+
+func TestLog(t *testing.T) {
+	log.SetFormatter(&log.TextFormatter{DisableQuote:true})
+	log.SetReportCaller(true)
+	log.Error("hello")
+
+	log.WithField("stack", fmt.Sprintf("%+v", errors.WithStack(errors.New("")))).Errorf("hello")
+
+	fmt.Printf("%q",fmt.Sprintf("%+v",errors.New("hello")))
 }

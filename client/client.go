@@ -34,6 +34,7 @@ type StreamSession interface {
 	NewReader() (StreamReader, error)
 	NewWriter() (StreamWriter, error)
 	SetReadOffset(offset int64) error
+	SetReadOffsetWithCb(offset int64, f func(err error))
 	GetReadOffset() (offset int64, err error)
 }
 
@@ -43,15 +44,17 @@ type Client interface {
 	AddStreamServer(ctx context.Context, StreamServerID int64, addr string) error
 
 	//stream
-	CreateStream(ctx context.Context, name string) (streamID int64, err error)
-	GetStreamID(ctx context.Context, name string) (streamID int64, err error)
-	GetOrCreateStream(ctx context.Context, name string) (streamID int64, err error)
-	GetStreamStat(ctx context.Context, name string) (begin int64, end int64, err error)
+	GetOrCreateStreamInfoItem(ctx context.Context, name string) (item *store.StreamInfoItem, err error)
+	CreateStreamInfoItem(ctx context.Context, name string) (item *store.StreamInfoItem, err error)
+	GetStreamInfoItem(ctx context.Context, name string) (item *store.StreamInfoItem, err error)
+	GetStreamStat(ctx context.Context, item *store.StreamInfoItem) (begin int64, end int64, err error)
+	SetStreamReadOffset(ctx context.Context, sessionID int64, offset int64, item *store.StreamInfoItem) error
+
+	CreateSessionAndReader(ctx context.Context,
+		sessionID int64, streamInfo *store.StreamInfoItem) (StreamSession, StreamReader, error)
 
 	//session
-	NewStreamSession(ctx context.Context, sessionID int64, name string) (StreamSession, error)
-	NewStreamSession2(ctx context.Context, sessionID int64, streamID int64, streamServerID int64) (StreamSession, error)
-	NewStreamWriter(ctx context.Context, streamID int64, streamServerID int64) (StreamWriter, error)
+	NewStreamSession(ctx context.Context, sessionID int64, streamInfo *store.StreamInfoItem) (StreamSession, error)
 
 	//MQTT
 	GetOrCreateMQTTSession(ctx context.Context, clientIdentifier string) (*store.MQTTSessionItem, bool, error)
@@ -70,16 +73,38 @@ type client struct {
 	streamRequestWriters       map[int64]*streamRequestWriter
 }
 
-func (c *client) NewStreamWriter(ctx context.Context, streamID int64, streamServerID int64) (StreamWriter, error) {
-	streamServiceClient, err := c.getStreamClient(ctx, streamServerID)
+func (c *client) CreateSessionAndReader(ctx context.Context,
+	sessionID int64, streamInfo *store.StreamInfoItem) (StreamSession, StreamReader, error) {
+	session, err := c.NewStreamSession(ctx, sessionID, streamInfo)
+	if err != nil {
+		return nil, nil, errors.WithStack(err)
+	}
+	offset, err := session.GetReadOffset()
+	if err != nil {
+		return nil, nil, errors.WithStack(err)
+	}
+	reader, err := session.NewReader()
+	if err != nil {
+		return nil, nil, errors.WithStack(err)
+	}
+	if offset != 0 {
+		if _, err := reader.Seek(offset, io.SeekStart); err != nil {
+			_ = reader.Close()
+			return nil, nil, errors.WithStack(err)
+		}
+	}
+	return session, reader, nil
+}
+
+func (c *client) NewStreamWriter(ctx context.Context, item store.StreamInfoItem) (StreamWriter, error) {
+	streamServiceClient, err := c.getStreamClient(ctx, item.StreamServerId)
 	if err != nil {
 		log.Error(err)
 		return nil, err
 	}
-	writeStreamRequests := c.startStreamRequestWriter(streamServerID, streamServiceClient)
+	writeStreamRequests := c.startStreamRequestWriter(item.StreamServerId, streamServiceClient)
 	return &streamWriter{
 		locker:              sync.Mutex{},
-		streamID:            streamID,
 		buffer:              bytes.Buffer{},
 		writeStreamRequests: writeStreamRequests,
 	}, nil
@@ -104,7 +129,7 @@ func NewClient(sc proto.MetaServiceClient) Client {
 		streamServiceClientLocker:  sync.Mutex{},
 		metaServerClient:           sc,
 		streamServiceClient:        make(map[int64]proto.StreamServiceClient),
-		setReadOffsetRequestQueue:  block_queue.NewQueue(10240),
+		setReadOffsetRequestQueue:  block_queue.NewQueue(1024),
 		streamRequestWritersLocker: sync.Mutex{},
 		streamRequestWriters:       map[int64]*streamRequestWriter{},
 	}
@@ -175,32 +200,30 @@ func (c *client) getMetaServiceClient() (proto.MetaServiceClient, error) {
 	return c.metaServerClient, nil
 }
 
-func (c *client) CreateStream(ctx context.Context, name string) (streamID int64, err error) {
+func (c *client) CreateStreamInfoItem(ctx context.Context, name string) (streamID *store.StreamInfoItem, err error) {
 	metaServiceClient, err := c.getMetaServiceClient()
 	if err != nil {
-		log.Error(err)
-		return 0, err
+		return nil, errors.WithStack(err)
 	}
 
 	response, err := metaServiceClient.CreateStream(ctx, &proto.CreateStreamRequest{Name: name})
 	if err != nil {
-		log.Error(err)
-		return 0, err
+		return nil, errors.WithStack(err)
 	}
-	return response.Info.StreamId, nil
+	return response.Info, nil
 }
 
-func (c *client) GetStreamID(ctx context.Context, name string) (streamID int64, err error) {
+func (c *client) GetStreamInfoItem(ctx context.Context, name string) (info *store.StreamInfoItem, err error) {
 	metaServiceClient, err := c.getMetaServiceClient()
 	if err != nil {
-		return 0, err
+		return nil, errors.WithStack(err)
 	}
 
 	response, err := metaServiceClient.CreateStream(ctx, &proto.CreateStreamRequest{Name: name})
 	if err != nil {
-		return 0, err
+		return nil, errors.WithStack(err)
 	}
-	return response.Info.StreamId, nil
+	return response.Info, nil
 }
 
 func (c *client) GetOrCreateMQTTSession(ctx context.Context, clientIdentifier string) (*store.MQTTSessionItem, bool, error) {
@@ -224,8 +247,7 @@ func (c *client) UpdateMQTTClientSession(ctx context.Context,
 
 	metaServiceClient, err := c.getMetaServiceClient()
 	if err != nil {
-		log.Error(err)
-		return err
+		return errors.WithStack(err)
 	}
 	_, err = metaServiceClient.UpdateMQTTClientSession(ctx, &proto.UpdateMQTTClientSessionRequest{
 		ClientIdentifier: clientIdentifier,
@@ -233,8 +255,7 @@ func (c *client) UpdateMQTTClientSession(ctx context.Context,
 		UnSubscribe:      Unsubscribe,
 	})
 	if err != nil {
-		log.Error(err)
-		return err
+		return errors.WithStack(err)
 	}
 	return nil
 }
@@ -254,74 +275,48 @@ func (c *client) DeleteMQTTClientSession(ctx context.Context, clientIdentifier s
 	return response.SessionItem, nil
 }
 
-func (c *client) GetOrCreateStream(ctx context.Context, name string) (streamID int64, err error) {
+func (c *client) GetOrCreateStreamInfoItem(ctx context.Context, name string) (streamID *store.StreamInfoItem, err error) {
 	metaServiceClient, err := c.getMetaServiceClient()
 	if err != nil {
-		return 0, err
+		return nil, errors.WithStack(err)
 	}
 
 	response, err := metaServiceClient.GetOrCreateStream(ctx, &proto.GetStreamInfoRequest{Name: name})
 	if err != nil {
-		return 0, errors.WithStack(err)
+		return nil, errors.WithStack(err)
 	}
-	return response.Info.StreamId, nil
+	return response.Info, nil
 }
 
-func (c *client) GetStreamStat(ctx context.Context, name string) (int64, int64, error) {
-	metaServiceClient, err := c.getMetaServiceClient()
+func (c *client) SetStreamReadOffset(ctx context.Context, sessionID int64, offset int64, item *store.StreamInfoItem) error {
+	client, err := c.getMetaServiceClient()
 	if err != nil {
-		return 0, 0, err
+		return err
 	}
-	response, err := metaServiceClient.GetStreamInfo(ctx, &proto.GetStreamInfoRequest{Name: name})
+	_, err = client.SetStreamReadOffset(ctx, &proto.SetStreamReadOffsetRequest{SSOffsets: []*store.SSOffsetItem{{
+		SessionId: sessionID,
+		StreamId:  item.StreamId,
+		Offset:    offset,
+	}}})
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
+}
+
+func (c *client) GetStreamStat(ctx context.Context, item *store.StreamInfoItem) (int64, int64, error) {
+	streamClient, err := c.getStreamClient(ctx, item.StreamServerId)
 	if err != nil {
 		return 0, 0, errors.WithStack(err)
 	}
-	streamClient, err := c.getStreamClient(ctx, response.Info.StreamServerId)
+	stat, err := streamClient.GetStreamStat(ctx, &proto.GetStreamStatRequest{StreamID: item.StreamId})
 	if err != nil {
-		return 0, 0, errors.WithStack(err)
-	}
-	stat, err := streamClient.GetStreamStat(ctx, &proto.GetStreamStatRequest{StreamID: response.Info.StreamId})
-	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return 0, 0, nil
+		}
 		return 0, 0, errors.WithStack(err)
 	}
 	return stat.Begin, stat.End, nil
-}
-
-func (c *client) NewStreamSession2(ctx context.Context, sessionID int64, streamID int64, streamServerID int64) (StreamSession, error) {
-	metaServiceClient, err := c.getMetaServiceClient()
-	if err != nil {
-		return nil, err
-	}
-	return &session{
-		name:             "",
-		readBuffSize:     1024,
-		ctx:              ctx,
-		sessionID:        sessionID,
-		streamID:         streamID,
-		streamServerId:   streamServerID,
-		client:           c,
-		metaServerClient: metaServiceClient,
-	}, nil
-}
-
-func (c *client) NewStreamSession(ctx context.Context, sessionID int64, name string) (StreamSession, error) {
-	streamID, err := c.GetOrCreateStream(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	metaServiceClient, err := c.getMetaServiceClient()
-	if err != nil {
-		return nil, err
-	}
-	return &session{
-		name:             name,
-		readBuffSize:     1024,
-		ctx:              ctx,
-		sessionID:        sessionID,
-		streamID:         streamID,
-		client:           c,
-		metaServerClient: metaServiceClient,
-	}, nil
 }
 
 func (c *client) getStreamClient(ctx context.Context, streamServerID int64) (proto.StreamServiceClient, error) {
@@ -344,30 +339,35 @@ func (c *client) getStreamClient(ctx context.Context, streamServerID int64) (pro
 	return client, nil
 }
 
+func (c *client) NewStreamSession(ctx context.Context, sessionID int64, streamInfo *store.StreamInfoItem) (StreamSession, error) {
+	metaServiceClient, err := c.getMetaServiceClient()
+	if err != nil {
+		return nil, err
+	}
+	return &session{
+		readBuffSize:     1024 * 4,
+		ctx:              ctx,
+		sessionID:        sessionID,
+		client:           c,
+		streamInfo:       streamInfo,
+		metaServerClient: metaServiceClient,
+	}, nil
+}
+
 func (c *client) Close() error {
 	return nil
 }
 
 type session struct {
-	name             string
 	readBuffSize     int64
 	ctx              context.Context
 	sessionID        int64
-	streamID         int64
-	streamServerId   int64
 	client           *client
+	streamInfo       *store.StreamInfoItem
 	metaServerClient proto.MetaServiceClient
 }
 
 func (s *session) NewReader() (StreamReader, error) {
-	if s.streamServerId == 0 {
-		response, err := s.metaServerClient.GetStreamInfo(s.ctx, &proto.GetStreamInfoRequest{Name: s.name})
-		if err != nil {
-			return nil, errors.WithStack(err)
-		}
-		s.streamServerId = response.Info.StreamServerId
-		s.streamID = response.Info.StreamId
-	}
 	offset, err := s.GetReadOffset()
 	if err != nil {
 		errStatus := status.Convert(err)
@@ -375,14 +375,13 @@ func (s *session) NewReader() (StreamReader, error) {
 			return nil, errors.WithStack(err)
 		}
 	}
-	streamClient, err := s.client.getStreamClient(s.ctx, s.streamServerId)
+	streamClient, err := s.client.getStreamClient(s.ctx, s.streamInfo.StreamServerId)
 	if err != nil {
 		return nil, err
 	}
 	return &streamReader{
 		readBuffSize:    s.readBuffSize,
 		offset:          offset,
-		streamID:        s.streamID,
 		rpcStreamReader: nil,
 		reader:          nil,
 		client:          streamClient,
@@ -392,22 +391,14 @@ func (s *session) NewReader() (StreamReader, error) {
 }
 
 func (s *session) NewWriter() (StreamWriter, error) {
-	if s.streamServerId == 0 {
-		response, err := s.metaServerClient.GetStreamInfo(s.ctx, &proto.GetStreamInfoRequest{Name: s.name})
-		if err != nil {
-			return nil, err
-		}
-		s.streamServerId = response.Info.StreamServerId
-		s.sessionID = response.Info.StreamId
-	}
-	streamServiceClient, err := s.client.getStreamClient(s.ctx, s.streamServerId)
+	streamServiceClient, err := s.client.getStreamClient(s.ctx, s.streamInfo.StreamServerId)
 	if err != nil {
 		return nil, err
 	}
-	writeStreamRequests := s.client.startStreamRequestWriter(s.streamServerId, streamServiceClient)
+	writeStreamRequests := s.client.startStreamRequestWriter(s.streamInfo.StreamServerId, streamServiceClient)
 	return &streamWriter{
 		locker:              sync.Mutex{},
-		streamID:            s.sessionID,
+		streamInfo:          s.streamInfo,
 		buffer:              bytes.Buffer{},
 		writeStreamRequests: writeStreamRequests,
 	}, nil
@@ -419,7 +410,7 @@ func (s *session) SetReadOffset(offset int64) error {
 	var err error
 	ch := chanPool.Get().(chan interface{})
 	s.client.putSetReadOffsetRequest(setReadOffsetRequest{
-		item: &store.SSOffsetItem{Offset: offset, SessionId: s.sessionID, StreamId: s.streamID},
+		item: &store.SSOffsetItem{Offset: offset, SessionId: s.sessionID, StreamId: s.streamInfo.StreamId},
 		cb: func(e error) {
 			err = e
 			ch <- struct{}{}
@@ -434,9 +425,16 @@ func (s *session) SetReadOffset(offset int64) error {
 	}
 }
 
+func (s *session) SetReadOffsetWithCb(offset int64, f func(err error)) {
+	s.client.putSetReadOffsetRequest(setReadOffsetRequest{
+		item: &store.SSOffsetItem{Offset: offset, SessionId: s.sessionID, StreamId: s.streamInfo.StreamId},
+		cb:   f,
+	})
+}
+
 func (s *session) GetReadOffset() (offset int64, err error) {
 	response, err := s.metaServerClient.GetStreamReadOffset(s.ctx,
-		&proto.GetStreamReadOffsetRequest{StreamId: s.streamID, SessionId: s.sessionID})
+		&proto.GetStreamReadOffsetRequest{StreamId: s.streamInfo.StreamId, SessionId: s.sessionID})
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
 			return 0, nil

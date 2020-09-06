@@ -165,7 +165,8 @@ func (server *MetaServer) GetOrCreateMQTTClientSession(ctx context.Context,
 	}, nil
 }
 
-func (server *MetaServer) DeleteMQTTClientSession(ctx context.Context, request *proto.DeleteMQTTClientSessionRequest) (*proto.DeleteMQTTClientSessionResponse, error) {
+func (server *MetaServer) DeleteMQTTClientSession(ctx context.Context,
+	request *proto.DeleteMQTTClientSessionRequest) (*proto.DeleteMQTTClientSessionResponse, error) {
 	item, err := server.store.DeleteMQTTClientSession(request.ClientIdentifier)
 	if err != nil {
 		log.Error(err.Error())

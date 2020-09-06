@@ -22,13 +22,13 @@ func main() {
 	}
 	client := client.NewClient(msClient)
 
-	streamID, err := client.GetOrCreateStream(ctx, "hello")
+	infoItem, err := client.GetOrCreateStreamInfoItem(ctx, "hello")
 	if err != nil {
 		panic(err.Error())
 	}
-	fmt.Println(streamID)
+	fmt.Println(infoItem)
 
-	session, err := client.NewStreamSession(ctx, 1, "hello")
+	session, err := client.NewStreamSession(ctx, 1, infoItem)
 	if err != nil {
 		panic(err.Error())
 	}

@@ -209,9 +209,19 @@ func (x *MQTTSessionItem) GetType() uint16 {
 
 func (x *MQTTSessionItem) Clone() *MQTTSessionItem {
 	clone := new(MQTTSessionItem)
-	clone.StreamId = x.StreamId
+	clone.Qos0StreamInfo = &StreamInfoItem{
+		StreamId:       x.Qos0StreamInfo.StreamId,
+		Name:           x.Qos0StreamInfo.Name,
+		StreamServerId: x.Qos0StreamInfo.StreamServerId,
+	}
+	clone.Qos1StreamInfo = &StreamInfoItem{
+		StreamId:       x.Qos1StreamInfo.StreamId,
+		Name:           x.Qos1StreamInfo.Name,
+		StreamServerId: x.Qos1StreamInfo.StreamServerId,
+	}
+	clone.CreateTs = x.CreateTs
+	clone.AccessTs = x.AccessTs
 	clone.SessionId = x.SessionId
-	clone.StreamServerId = x.StreamServerId
 	clone.ClientIdentifier = x.ClientIdentifier
 	clone.Topics = map[string]int32{}
 	for topic, qos := range x.Topics {

@@ -3,6 +3,7 @@ package mqtt_broker
 import (
 	"bytes"
 	"github.com/akzj/streamIO/client"
+	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/eclipse/paho.mqtt.golang/packets"
 	"github.com/google/btree"
 	log "github.com/sirupsen/logrus"
@@ -10,13 +11,12 @@ import (
 )
 
 type subscriber struct {
-	streamWriter   client.StreamWriter
-	streamID       int64
-	streamServerID int64
-	clientIdentify string
-	qos            int32
-	topic          string
-	status         *subscriberStatus
+	streamWriter client.StreamWriter
+	sessionID    int64
+	qos          int32
+	topic        string
+	status       *subscriberStatus
+	streamInfo   *store.StreamInfoItem
 }
 
 func (s *subscriber) Online() bool {
@@ -28,7 +28,7 @@ func (s *subscriber) Qos() int32 {
 }
 
 func (s *subscriber) ID() int64 {
-	return s.streamID
+	return s.sessionID
 }
 
 func (s *subscriber) Topic() string {
@@ -42,14 +42,14 @@ func (s *subscriber) writePacket(packet *packets.PublishPacket, callback func(er
 	}
 	var buffer bytes.Buffer
 	if err := packet.Write(&buffer); err != nil {
-		log.Fatal("%+v", err)
+		log.Fatalf("%+v", err)
 	}
 	s.streamWriter.WriteWithCb(buffer.Bytes(), callback)
 }
 
 type subscriberStatus struct {
-	clientIdentifier string
-	status           *ClientStatusChangeEvent_Status
+	sessionID int64
+	status    *ClientStatusChangeEvent_Status
 }
 
 func (ss subscriberStatus) Status() ClientStatusChangeEvent_Status {
@@ -57,5 +57,5 @@ func (ss subscriberStatus) Status() ClientStatusChangeEvent_Status {
 }
 
 func (ss *subscriberStatus) Less(item btree.Item) bool {
-	return ss.clientIdentifier < item.(*subscriberStatus).clientIdentifier
+	return ss.sessionID < item.(*subscriberStatus).sessionID
 }
