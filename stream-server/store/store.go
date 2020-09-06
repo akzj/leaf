@@ -6,6 +6,7 @@ import (
 	"github.com/akzj/sstore"
 	"github.com/akzj/streamIO/proto"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/xerrors"
 	"io"
 	"math"
 )
@@ -37,13 +38,32 @@ func (store *Store) WriteRequest(request *proto.WriteStreamRequest, callback fun
 
 func (store *Store) ReadRequest(ctx context.Context, request *proto.ReadStreamRequest,
 	callback func(offset int64, data []byte) error) error {
+	var watcher sstore.Watcher
+	defer func() {
+		if watcher != nil {
+			watcher.Close()
+		}
+	}()
 	reader, err := store.sstore.Reader(request.StreamId)
 	if err != nil {
-		log.WithField("streamID", request.StreamId).Warn(err)
-		return err
+		unwrapErr, ok := err.(xerrors.Wrapper)
+		if !request.Watch || ok == false || unwrapErr.Unwrap() != sstore.ErrNoFindStream {
+			log.WithField("streamID", request.StreamId).Warn(err)
+			return err
+		}
+		watcher = store.sstore.Watcher(request.StreamId)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-watcher.Watch():
+			reader, err = store.sstore.Reader(request.StreamId)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	end, _ := store.sstore.End(request.StreamId)
-	log.WithField("end", end).Info("")
+	log.WithField("end", end).Info("stream status")
 	if _, err := reader.Seek(request.Offset, io.SeekStart); err != nil {
 		log.WithField("Offset", request.Offset).Warn(err)
 		return err
@@ -51,12 +71,6 @@ func (store *Store) ReadRequest(ctx context.Context, request *proto.ReadStreamRe
 	if request.Size == 0 {
 		request.Size = math.MaxInt64
 	}
-	var watcher sstore.Watcher
-	defer func() {
-		if watcher != nil {
-			watcher.Close()
-		}
-	}()
 	const maxBufferSize = 64 * 1024
 	var buffer = make([]byte, maxBufferSize)
 	for request.Size > 0 {

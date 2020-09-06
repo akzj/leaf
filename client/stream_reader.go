@@ -150,6 +150,7 @@ func (r *rpcStreamReader) rpcRequestLoop() {
 			StreamId: r.streamID,
 			Offset:   r.offset,
 			Size:     size,
+			Watch:    true,
 		})
 		if err != nil {
 			log.Error(err)
