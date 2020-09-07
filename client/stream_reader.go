@@ -16,7 +16,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -99,7 +98,7 @@ func (s *streamReader) Close() error {
 }
 
 type rpcStreamReader struct {
-	streamInfo  *store.StreamInfoItem
+	streamInfo  *proto.StreamInfoItem
 	offset      int64
 	bytesToRead int64
 	ctx         context.Context
@@ -112,7 +111,7 @@ type rpcStreamReader struct {
 }
 
 func newRpcStreamReader(ctx context.Context,
-	streamInfo *store.StreamInfoItem,
+	streamInfo *proto.StreamInfoItem,
 	offset int64,
 	minToRead int64,
 	client proto.StreamServiceClient) *rpcStreamReader {

@@ -16,7 +16,7 @@ package mqtt_broker
 import (
 	"bytes"
 	"github.com/akzj/streamIO/client"
-	"github.com/akzj/streamIO/meta-server/store"
+	"github.com/akzj/streamIO/proto"
 	"github.com/eclipse/paho.mqtt.golang/packets"
 	"github.com/google/btree"
 	log "github.com/sirupsen/logrus"
@@ -29,11 +29,11 @@ type subscriber struct {
 	qos          int32
 	topic        string
 	status       *subscriberStatus
-	streamInfo   *store.StreamInfoItem
+	streamInfo   *proto.StreamInfoItem
 }
 
 func (s *subscriber) Online() bool {
-	return s.status.Status() == ClientStatusChangeEvent_Online
+	return s.status.Status() == proto.ClientStatusChangeEvent_Online
 }
 
 func (s *subscriber) Qos() int32 {
@@ -67,11 +67,11 @@ func (s *subscriber) writePacket(packet *packets.PublishPacket, callback func(er
 
 type subscriberStatus struct {
 	sessionID int64
-	status    *ClientStatusChangeEvent_Status
+	status    *proto.ClientStatusChangeEvent_Status
 }
 
-func (ss subscriberStatus) Status() ClientStatusChangeEvent_Status {
-	return ClientStatusChangeEvent_Status(atomic.LoadInt32((*int32)(ss.status)))
+func (ss subscriberStatus) Status() proto.ClientStatusChangeEvent_Status {
+	return proto.ClientStatusChangeEvent_Status(atomic.LoadInt32((*int32)(ss.status)))
 }
 
 func (ss *subscriberStatus) Less(item btree.Item) bool {

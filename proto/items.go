@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package proto
 
 import (
 	"encoding/binary"
@@ -103,7 +103,7 @@ func (x *StreamInfoItem) GetType() uint16 {
 
 //MetaDataItem
 
-var metaDataItemKey = &MetaDataItem{Key: 1}
+var MetaDataItemKey = &MetaDataItem{Key: 1}
 
 func (x *MetaDataItem) Less(other btree.Item) bool {
 	if x.GetType() != other.(Item).GetType() {
@@ -172,10 +172,10 @@ func (x *StreamServerInfoItem) GetType() uint16 {
 //StreamServerHeartbeatItem
 
 var (
-	streamServerHeartbeatItemKeyMin = &StreamServerHeartbeatItem{
+	StreamServerHeartbeatItemKeyMin = &StreamServerHeartbeatItem{
 		Base: &ServerInfoBase{Id: 0},
 	}
-	streamServerHeartbeatItemKeyMax = &StreamServerHeartbeatItem{
+	StreamServerHeartbeatItemKeyMax = &StreamServerHeartbeatItem{
 		Base: &ServerInfoBase{Id: math.MaxInt64},
 	}
 )

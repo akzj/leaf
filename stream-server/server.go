@@ -15,7 +15,6 @@ package stream_server
 
 import (
 	"context"
-	MSStore "github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
 	"github.com/akzj/streamIO/stream-server/store"
 	"github.com/pkg/errors"
@@ -35,7 +34,7 @@ type StreamServer struct {
 	ctx               context.Context
 	cancel            context.CancelFunc
 	wg                sync.WaitGroup
-	ServerInfoBase    *MSStore.ServerInfoBase
+	ServerInfoBase    *proto.ServerInfoBase
 	store             *store.Store
 	grpcServer        *grpc.Server
 	metaServiceClient proto.MetaServiceClient
@@ -57,7 +56,7 @@ func New(options Options) *StreamServer {
 		ctx:     ctx,
 		cancel:  cancel,
 		wg:      sync.WaitGroup{},
-		ServerInfoBase: &MSStore.ServerInfoBase{
+		ServerInfoBase: &proto.ServerInfoBase{
 			Id:     options.ServerID,
 			Leader: true,
 			Addr:   net.JoinHostPort(options.Host, strconv.Itoa(options.GRPCPort)),
@@ -81,7 +80,7 @@ func (server *StreamServer) init() error {
 
 	if server.AutoAddServer {
 		addStreamServerResponse, err := server.metaServiceClient.AddStreamServer(server.ctx,
-			&proto.AddStreamServerRequest{StreamServerInfoItem: &MSStore.StreamServerInfoItem{
+			&proto.AddStreamServerRequest{StreamServerInfoItem: &proto.StreamServerInfoItem{
 				Base: server.ServerInfoBase}})
 		if err != nil {
 			if status.Code(err) != codes.AlreadyExists {

@@ -16,6 +16,7 @@ package store
 import (
 	"fmt"
 	"github.com/akzj/streamIO/pkg/mmdb"
+	. "github.com/akzj/streamIO/proto"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -40,7 +41,7 @@ func OpenStore(options mmdb.Options) *Store {
 	}
 
 	if err := db.Update(func(tx mmdb.Transaction) error {
-		item := tx.Get(metaDataItemKey)
+		item := tx.Get(MetaDataItemKey)
 		if item == nil {
 			tx.ReplaceOrInsert(&MetaDataItem{NextStreamId: 1, Key: 1})
 		}
@@ -75,7 +76,7 @@ func (store *Store) CreateStream(name string) (item *StreamInfoItem, create bool
 			return nil
 		}
 		var metaDataItem *MetaDataItem
-		item := tx.Get(metaDataItemKey)
+		item := tx.Get(MetaDataItemKey)
 		if item == nil {
 			metaDataItem = new(MetaDataItem)
 			metaDataItem.NextStreamId = 1
@@ -282,7 +283,7 @@ func (store *Store) InsertStreamServerHeartbeatItem(item *StreamServerHeartbeatI
 func (store *Store) ListStreamServerHeartbeat() ([]*StreamServerHeartbeatItem, error) {
 	var items []*StreamServerHeartbeatItem
 	err := store.db.View(func(tx mmdb.Transaction) error {
-		tx.AscendRange(streamServerHeartbeatItemKeyMin, streamServerHeartbeatItemKeyMax, func(item mmdb.Item) bool {
+		tx.AscendRange(StreamServerHeartbeatItemKeyMin, StreamServerHeartbeatItemKeyMax, func(item mmdb.Item) bool {
 			items = append(items, item.(*StreamServerHeartbeatItem))
 			return true
 		})

@@ -13,7 +13,8 @@
 
 syntax = "proto3";
 import "google/protobuf/timestamp.proto";
-option go_package = "github.com/akzj/streamIO/meta-server/store;store";
+option go_package = "github.com/akzj/streamIO/proto;proto";
+package proto;
 
 message StreamInfoItem {
   int64 stream_id = 1;

@@ -21,10 +21,10 @@ import (
 	"fmt"
 	"github.com/akzj/block-queue"
 	"github.com/akzj/streamIO/client"
-	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/pkg/utils"
+	"github.com/akzj/streamIO/proto"
 	"github.com/eclipse/paho.mqtt.golang/packets"
-	"github.com/golang/protobuf/proto"
+	pproto "github.com/golang/protobuf/proto"
 	"github.com/google/btree"
 	"github.com/gorilla/websocket"
 	"github.com/pkg/errors"
@@ -336,7 +336,7 @@ func (broker *Broker) handleEvent(packet packets.ControlPacket) {
 	broker.eventQueue.Push(packet)
 }
 
-func (broker *Broker) newSubscriber(event *SubscribeEvent) ([]Subscriber, error) {
+func (broker *Broker) newSubscriber(event *proto.SubscribeEvent) ([]Subscriber, error) {
 	item := broker.metaTree.Get(&subscriberStatus{sessionID: event.SessionId})
 	if item == nil {
 		return nil, fmt.Errorf("no find session status")
@@ -367,14 +367,14 @@ func (broker *Broker) newSubscriber(event *SubscribeEvent) ([]Subscriber, error)
 	return subscribers, nil
 }
 
-func (broker *Broker) handleSubscribeEvent(event *SubscribeEvent) {
+func (broker *Broker) handleSubscribeEvent(event *proto.SubscribeEvent) {
 	log.WithField("event", event).Info("handleSubscribeEvent")
 	tree := broker.getSubscribeTree().Clone()
 	broker.insertSubscriber2Tree(tree, event)
 	broker.setSubscribeTree(tree)
 }
 
-func (broker *Broker) insertSubscriber2Tree(tree *TopicTree, event *SubscribeEvent) {
+func (broker *Broker) insertSubscriber2Tree(tree *TopicTree, event *proto.SubscribeEvent) {
 	subs, err := broker.newSubscriber(event)
 	if err != nil {
 		log.Errorf("%+v\n", err)
@@ -385,7 +385,7 @@ func (broker *Broker) insertSubscriber2Tree(tree *TopicTree, event *SubscribeEve
 	}
 }
 
-func (broker *Broker) handleUnSubscribeEvent(event *UnSubscribeEvent) {
+func (broker *Broker) handleUnSubscribeEvent(event *proto.UnSubscribeEvent) {
 	log.WithField("event", event).Info("handleUnSubscribeEvent")
 	tree := broker.getSubscribeTree().Clone()
 	for _, topic := range event.Topic {
@@ -394,14 +394,14 @@ func (broker *Broker) handleUnSubscribeEvent(event *UnSubscribeEvent) {
 	broker.setSubscribeTree(tree)
 }
 
-func (broker *Broker) handleRetainMessageEvent(event *RetainMessageEvent) {
+func (broker *Broker) handleRetainMessageEvent(event *proto.RetainMessageEvent) {
 	log.WithField("event", event).Info("handleRetainMessageEvent")
 	tree := broker.getSubscribeTree().Clone()
 	_ = broker.insertRetainMessage2Tree(tree, event)
 	broker.setSubscribeTree(tree)
 }
 
-func (broker *Broker) insertRetainMessage2Tree(tree *TopicTree, event *RetainMessageEvent) error {
+func (broker *Broker) insertRetainMessage2Tree(tree *TopicTree, event *proto.RetainMessageEvent) error {
 	var buffer = bytes.NewReader(event.Data)
 	packet, err := packets.ReadPacket(buffer)
 	if err != nil {
@@ -418,13 +418,13 @@ func (broker *Broker) processEventLoop() {
 		for _, item := range items {
 			event := item.(EventWithOffset)
 			switch event := event.event.(type) {
-			case *SubscribeEvent:
+			case *proto.SubscribeEvent:
 				broker.handleSubscribeEvent(event)
-			case *UnSubscribeEvent:
+			case *proto.UnSubscribeEvent:
 				broker.handleUnSubscribeEvent(event)
-			case *RetainMessageEvent:
+			case *proto.RetainMessageEvent:
 				broker.handleRetainMessageEvent(event)
-			case *ClientStatusChangeEvent:
+			case *proto.ClientStatusChangeEvent:
 				broker.handleClientStatusChangeEvent(event)
 			default:
 				log.Fatalf("unknown event %+v\n", event)
@@ -452,35 +452,35 @@ func (broker *Broker) processEventLoop() {
 	}
 }
 
-func (broker *Broker) handleUnSubscribePacket(sessionItem *store.MQTTSessionItem,
+func (broker *Broker) handleUnSubscribePacket(sessionItem *proto.MQTTSessionItem,
 	packet *packets.UnsubscribePacket) error {
-	event := UnSubscribeEvent{
+	event := proto.UnSubscribeEvent{
 		SessionId: sessionItem.SessionId,
 		Topic:     packet.Topics,
 	}
 	return broker.sendEvent(&event)
 }
 
-func (broker *Broker) sendEvent(message proto.Message) error {
-	event := Event{}
+func (broker *Broker) sendEvent(message pproto.Message) error {
+	event := proto.Event{}
 	switch typ := message.(type) {
-	case *SubscribeEvent:
-		event.Type = Event_SubscribeEvent
-	case *UnSubscribeEvent:
-		event.Type = Event_UnSubscribeEvent
-	case *RetainMessageEvent:
-		event.Type = Event_RetainMessageEvent
-	case *ClientStatusChangeEvent:
-		event.Type = Event_ClientStatusChangeEvent
+	case *proto.SubscribeEvent:
+		event.Type = proto.Event_SubscribeEvent
+	case *proto.UnSubscribeEvent:
+		event.Type = proto.Event_UnSubscribeEvent
+	case *proto.RetainMessageEvent:
+		event.Type = proto.Event_RetainMessageEvent
+	case *proto.ClientStatusChangeEvent:
+		event.Type = proto.Event_ClientStatusChangeEvent
 	default:
 		panic("unknown message type" + typ.String())
 	}
-	data, err := proto.Marshal(message)
+	data, err := pproto.Marshal(message)
 	if err != nil {
 		log.Fatalf("%+v\n", err)
 	}
 	event.Data = data
-	data, err = proto.Marshal(&event)
+	data, err = pproto.Marshal(&event)
 	if err != nil {
 		log.Fatalf("%+v\n", err)
 	}
@@ -501,9 +501,9 @@ func (broker *Broker) sendEvent(message proto.Message) error {
 	return nil
 }
 
-func (broker *Broker) handleSubscribePacket(sessionItem *store.MQTTSessionItem,
+func (broker *Broker) handleSubscribePacket(sessionItem *proto.MQTTSessionItem,
 	packet *packets.SubscribePacket) error {
-	event := SubscribeEvent{
+	event := proto.SubscribeEvent{
 		SessionId:      sessionItem.SessionId,
 		Qos0StreamInfo: sessionItem.Qos0StreamInfo,
 		Qos1StreamInfo: sessionItem.Qos1StreamInfo,
@@ -519,7 +519,7 @@ func (broker *Broker) handleSubscribePacket(sessionItem *store.MQTTSessionItem,
 func (broker *Broker) handleRetainPacket(packet *packets.PublishPacket) error {
 	var buffer bytes.Buffer
 	_ = packet.Write(&buffer)
-	event := RetainMessageEvent{
+	event := proto.RetainMessageEvent{
 		Data: buffer.Bytes(),
 	}
 	return broker.sendEvent(&event)
@@ -540,15 +540,15 @@ func (broker *Broker) checkpoint(clone *TopicTree, offset int64) error {
 	return nil
 }
 
-func (broker *Broker) handleClientStatusChange(sessionID int64, offline ClientStatusChangeEvent_Status) error {
-	event := &ClientStatusChangeEvent{
+func (broker *Broker) handleClientStatusChange(sessionID int64, offline proto.ClientStatusChangeEvent_Status) error {
+	event := &proto.ClientStatusChangeEvent{
 		SessionID: sessionID,
 		Status:    offline,
 	}
 	return broker.sendEvent(event)
 }
 
-func (broker *Broker) handleClientStatusChangeEvent(event *ClientStatusChangeEvent) {
+func (broker *Broker) handleClientStatusChangeEvent(event *proto.ClientStatusChangeEvent) {
 	log.WithField("event", event).Info("handleClientStatusChangeEvent")
 	item := broker.metaTree.Get(&subscriberStatus{
 		sessionID: event.SessionID,

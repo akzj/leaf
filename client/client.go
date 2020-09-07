@@ -16,7 +16,6 @@ import (
 	"bytes"
 	"context"
 	block_queue "github.com/akzj/block-queue"
-	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -56,22 +55,22 @@ type Client interface {
 	AddStreamServer(ctx context.Context, StreamServerID int64, addr string) error
 
 	//stream
-	GetOrCreateStreamInfoItem(ctx context.Context, name string) (item *store.StreamInfoItem, err error)
-	CreateStreamInfoItem(ctx context.Context, name string) (item *store.StreamInfoItem, err error)
-	GetStreamInfoItem(ctx context.Context, name string) (item *store.StreamInfoItem, err error)
-	GetStreamStat(ctx context.Context, item *store.StreamInfoItem) (begin int64, end int64, err error)
-	SetStreamReadOffset(ctx context.Context, sessionID int64, offset int64, item *store.StreamInfoItem) error
+	GetOrCreateStreamInfoItem(ctx context.Context, name string) (item *proto.StreamInfoItem, err error)
+	CreateStreamInfoItem(ctx context.Context, name string) (item *proto.StreamInfoItem, err error)
+	GetStreamInfoItem(ctx context.Context, name string) (item *proto.StreamInfoItem, err error)
+	GetStreamStat(ctx context.Context, item *proto.StreamInfoItem) (begin int64, end int64, err error)
+	SetStreamReadOffset(ctx context.Context, sessionID int64, offset int64, item *proto.StreamInfoItem) error
 
 	CreateSessionAndReader(ctx context.Context,
-		sessionID int64, streamInfo *store.StreamInfoItem) (StreamSession, StreamReader, error)
+		sessionID int64, streamInfo *proto.StreamInfoItem) (StreamSession, StreamReader, error)
 
 	//session
-	NewStreamSession(ctx context.Context, sessionID int64, streamInfo *store.StreamInfoItem) (StreamSession, error)
+	NewStreamSession(ctx context.Context, sessionID int64, streamInfo *proto.StreamInfoItem) (StreamSession, error)
 
 	//MQTT
-	GetOrCreateMQTTSession(ctx context.Context, clientIdentifier string) (*store.MQTTSessionItem, bool, error)
+	GetOrCreateMQTTSession(ctx context.Context, clientIdentifier string) (*proto.MQTTSessionItem, bool, error)
 	UpdateMQTTClientSession(ctx context.Context, clientIdentifier string, Unsubscribe []string, subscribe map[string]int32) error
-	DeleteMQTTClientSession(ctx context.Context, clientIdentifier string) (*store.MQTTSessionItem, error)
+	DeleteMQTTClientSession(ctx context.Context, clientIdentifier string) (*proto.MQTTSessionItem, error)
 }
 
 type client struct {
@@ -86,7 +85,7 @@ type client struct {
 }
 
 func (c *client) CreateSessionAndReader(ctx context.Context,
-	sessionID int64, streamInfo *store.StreamInfoItem) (StreamSession, StreamReader, error) {
+	sessionID int64, streamInfo *proto.StreamInfoItem) (StreamSession, StreamReader, error) {
 	session, err := c.NewStreamSession(ctx, sessionID, streamInfo)
 	if err != nil {
 		return nil, nil, errors.WithStack(err)
@@ -108,7 +107,7 @@ func (c *client) CreateSessionAndReader(ctx context.Context,
 	return session, reader, nil
 }
 
-func (c *client) NewStreamWriter(ctx context.Context, item store.StreamInfoItem) (StreamWriter, error) {
+func (c *client) NewStreamWriter(ctx context.Context, item proto.StreamInfoItem) (StreamWriter, error) {
 	streamServiceClient, err := c.getStreamClient(ctx, item.StreamServerId)
 	if err != nil {
 		log.Error(err)
@@ -123,7 +122,7 @@ func (c *client) NewStreamWriter(ctx context.Context, item store.StreamInfoItem)
 }
 
 type setReadOffsetRequest struct {
-	item  *store.SSOffsetItem
+	item  *proto.SSOffsetItem
 	close bool
 	cb    func(err error)
 }
@@ -195,8 +194,8 @@ func (c *client) processSetReadOffsetRequestLoop() {
 func (c *client) AddStreamServer(ctx context.Context, StreamServerID int64, addr string) error {
 	_, err := c.metaServerClient.AddStreamServer(ctx,
 		&proto.AddStreamServerRequest{StreamServerInfoItem:
-		&store.StreamServerInfoItem{Base:
-		&store.ServerInfoBase{
+		&proto.StreamServerInfoItem{Base:
+		&proto.ServerInfoBase{
 			Id:     StreamServerID,
 			Leader: true,
 			Addr:   addr,
@@ -212,7 +211,7 @@ func (c *client) getMetaServiceClient() (proto.MetaServiceClient, error) {
 	return c.metaServerClient, nil
 }
 
-func (c *client) CreateStreamInfoItem(ctx context.Context, name string) (streamID *store.StreamInfoItem, err error) {
+func (c *client) CreateStreamInfoItem(ctx context.Context, name string) (streamID *proto.StreamInfoItem, err error) {
 	metaServiceClient, err := c.getMetaServiceClient()
 	if err != nil {
 		return nil, errors.WithStack(err)
@@ -225,7 +224,7 @@ func (c *client) CreateStreamInfoItem(ctx context.Context, name string) (streamI
 	return response.Info, nil
 }
 
-func (c *client) GetStreamInfoItem(ctx context.Context, name string) (info *store.StreamInfoItem, err error) {
+func (c *client) GetStreamInfoItem(ctx context.Context, name string) (info *proto.StreamInfoItem, err error) {
 	metaServiceClient, err := c.getMetaServiceClient()
 	if err != nil {
 		return nil, errors.WithStack(err)
@@ -238,7 +237,7 @@ func (c *client) GetStreamInfoItem(ctx context.Context, name string) (info *stor
 	return response.Info, nil
 }
 
-func (c *client) GetOrCreateMQTTSession(ctx context.Context, clientIdentifier string) (*store.MQTTSessionItem, bool, error) {
+func (c *client) GetOrCreateMQTTSession(ctx context.Context, clientIdentifier string) (*proto.MQTTSessionItem, bool, error) {
 	metaServiceClient, err := c.getMetaServiceClient()
 	if err != nil {
 		log.Error(err)
@@ -272,7 +271,7 @@ func (c *client) UpdateMQTTClientSession(ctx context.Context,
 	return nil
 }
 
-func (c *client) DeleteMQTTClientSession(ctx context.Context, clientIdentifier string) (*store.MQTTSessionItem, error) {
+func (c *client) DeleteMQTTClientSession(ctx context.Context, clientIdentifier string) (*proto.MQTTSessionItem, error) {
 	metaServiceClient, err := c.getMetaServiceClient()
 	if err != nil {
 		log.Error(err)
@@ -287,7 +286,7 @@ func (c *client) DeleteMQTTClientSession(ctx context.Context, clientIdentifier s
 	return response.SessionItem, nil
 }
 
-func (c *client) GetOrCreateStreamInfoItem(ctx context.Context, name string) (streamID *store.StreamInfoItem, err error) {
+func (c *client) GetOrCreateStreamInfoItem(ctx context.Context, name string) (streamID *proto.StreamInfoItem, err error) {
 	metaServiceClient, err := c.getMetaServiceClient()
 	if err != nil {
 		return nil, errors.WithStack(err)
@@ -300,12 +299,12 @@ func (c *client) GetOrCreateStreamInfoItem(ctx context.Context, name string) (st
 	return response.Info, nil
 }
 
-func (c *client) SetStreamReadOffset(ctx context.Context, sessionID int64, offset int64, item *store.StreamInfoItem) error {
+func (c *client) SetStreamReadOffset(ctx context.Context, sessionID int64, offset int64, item *proto.StreamInfoItem) error {
 	client, err := c.getMetaServiceClient()
 	if err != nil {
 		return err
 	}
-	_, err = client.SetStreamReadOffset(ctx, &proto.SetStreamReadOffsetRequest{SSOffsets: []*store.SSOffsetItem{{
+	_, err = client.SetStreamReadOffset(ctx, &proto.SetStreamReadOffsetRequest{SSOffsets: []*proto.SSOffsetItem{{
 		SessionId: sessionID,
 		StreamId:  item.StreamId,
 		Offset:    offset,
@@ -316,7 +315,7 @@ func (c *client) SetStreamReadOffset(ctx context.Context, sessionID int64, offse
 	return nil
 }
 
-func (c *client) GetStreamStat(ctx context.Context, item *store.StreamInfoItem) (int64, int64, error) {
+func (c *client) GetStreamStat(ctx context.Context, item *proto.StreamInfoItem) (int64, int64, error) {
 	streamClient, err := c.getStreamClient(ctx, item.StreamServerId)
 	if err != nil {
 		return 0, 0, errors.WithStack(err)
@@ -351,7 +350,7 @@ func (c *client) getStreamClient(ctx context.Context, streamServerID int64) (pro
 	return client, nil
 }
 
-func (c *client) NewStreamSession(ctx context.Context, sessionID int64, streamInfo *store.StreamInfoItem) (StreamSession, error) {
+func (c *client) NewStreamSession(ctx context.Context, sessionID int64, streamInfo *proto.StreamInfoItem) (StreamSession, error) {
 	metaServiceClient, err := c.getMetaServiceClient()
 	if err != nil {
 		return nil, err
@@ -375,7 +374,7 @@ type session struct {
 	ctx              context.Context
 	sessionID        int64
 	client           *client
-	streamInfo       *store.StreamInfoItem
+	streamInfo       *proto.StreamInfoItem
 	metaServerClient proto.MetaServiceClient
 }
 
@@ -422,7 +421,7 @@ func (s *session) SetReadOffset(offset int64) error {
 	var err error
 	ch := chanPool.Get().(chan interface{})
 	s.client.putSetReadOffsetRequest(setReadOffsetRequest{
-		item: &store.SSOffsetItem{Offset: offset, SessionId: s.sessionID, StreamId: s.streamInfo.StreamId},
+		item: &proto.SSOffsetItem{Offset: offset, SessionId: s.sessionID, StreamId: s.streamInfo.StreamId},
 		cb: func(e error) {
 			err = e
 			ch <- struct{}{}
@@ -439,7 +438,7 @@ func (s *session) SetReadOffset(offset int64) error {
 
 func (s *session) SetReadOffsetWithCb(offset int64, f func(err error)) {
 	s.client.putSetReadOffsetRequest(setReadOffsetRequest{
-		item: &store.SSOffsetItem{Offset: offset, SessionId: s.sessionID, StreamId: s.streamInfo.StreamId},
+		item: &proto.SSOffsetItem{Offset: offset, SessionId: s.sessionID, StreamId: s.streamInfo.StreamId},
 		cb:   f,
 	})
 }

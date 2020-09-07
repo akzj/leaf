@@ -16,7 +16,6 @@ package client
 import (
 	"bytes"
 	"context"
-	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -135,7 +134,7 @@ func (writer *streamRequestWriter) Close() error {
 
 type streamWriter struct {
 	locker              sync.Mutex
-	streamInfo          *store.StreamInfoItem
+	streamInfo          *proto.StreamInfoItem
 	buffer              bytes.Buffer
 	writeStreamRequests chan<- writeStreamRequest
 }

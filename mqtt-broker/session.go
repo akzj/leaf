@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/akzj/streamIO/client"
-	"github.com/akzj/streamIO/meta-server/store"
+	"github.com/akzj/streamIO/proto"
 	"github.com/eclipse/paho.mqtt.golang/packets"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -31,7 +31,7 @@ import (
 )
 
 type session struct {
-	MQTTSessionInfo *store.MQTTSessionItem
+	MQTTSessionInfo *proto.MQTTSessionItem
 	create          bool //create
 	keepalive       uint16
 	broker          *Broker
@@ -83,7 +83,7 @@ func newSession(broker *Broker,
 		}
 	}
 	if err := broker.handleClientStatusChange(
-		info.SessionId, ClientStatusChangeEvent_Online); err != nil {
+		info.SessionId, proto.ClientStatusChangeEvent_Online); err != nil {
 		return nil, err
 	}
 	return &session{
@@ -387,7 +387,7 @@ func (sess *session) Close() error {
 	var err error
 	sess.closeOnce.Do(func() {
 		if err := sess.broker.handleClientStatusChange(
-			sess.MQTTSessionInfo.SessionId, ClientStatusChangeEvent_Offline); err != nil {
+			sess.MQTTSessionInfo.SessionId, proto.ClientStatusChangeEvent_Offline); err != nil {
 			sess.log.Errorf("%+v\n", err)
 		}
 		if sess.willMessage != nil {

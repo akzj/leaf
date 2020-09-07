@@ -18,8 +18,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"github.com/akzj/streamIO/proto"
 	"github.com/eclipse/paho.mqtt.golang/packets"
-	"github.com/golang/protobuf/proto"
+	pproto "github.com/golang/protobuf/proto"
 	"github.com/google/btree"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -84,31 +85,31 @@ func (s *Snapshot) reloadSnapshot(broker *Broker) error {
 			log.Error(err)
 			return err
 		}
-		var event Event
-		if err := proto.Unmarshal(data, &event); err != nil {
+		var event proto.Event
+		if err := pproto.Unmarshal(data, &event); err != nil {
 			log.Error(err)
 			return err
 		}
 		switch event.Type {
-		case Event_SubscribeEvent:
-			var subEvent SubscribeEvent
-			if err := proto.Unmarshal(event.Data, &subEvent); err != nil {
+		case proto.Event_SubscribeEvent:
+			var subEvent proto.SubscribeEvent
+			if err := pproto.Unmarshal(event.Data, &subEvent); err != nil {
 				log.Error(err)
 				return err
 			}
 			broker.insertSubscriber2Tree(broker.getSubscribeTree(), &subEvent)
-		case Event_RetainMessageEvent:
-			var message RetainMessageEvent
-			if err := proto.Unmarshal(event.Data, &message); err != nil {
+		case proto.Event_RetainMessageEvent:
+			var message proto.RetainMessageEvent
+			if err := pproto.Unmarshal(event.Data, &message); err != nil {
 				log.Error(err)
 				return err
 			}
 			if err := broker.insertRetainMessage2Tree(broker.getSubscribeTree(), &message); err != nil {
 				return err
 			}
-		case Event_ClientStatusChangeEvent:
-			var message ClientStatusChangeEvent
-			if err := proto.Unmarshal(event.Data, &message); err != nil {
+		case proto.Event_ClientStatusChangeEvent:
+			var message proto.ClientStatusChangeEvent
+			if err := pproto.Unmarshal(event.Data, &message); err != nil {
 				log.Error(err)
 				return err
 			}
@@ -139,8 +140,8 @@ func (s *Snapshot) WriteSnapshot(header SnapshotHeader, topicTree *TopicTree, me
 		return err
 	}
 
-	writerEvent := func(event *Event) error {
-		data, err = proto.Marshal(event)
+	writerEvent := func(event *proto.Event) error {
+		data, err = pproto.Marshal(event)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -155,7 +156,7 @@ func (s *Snapshot) WriteSnapshot(header SnapshotHeader, topicTree *TopicTree, me
 	topicTree.Walk(func(path string, subscribers map[int64]Subscriber) bool {
 		for _, iter := range subscribers {
 			sub := iter.(*subscriber)
-			var subEvent = &SubscribeEvent{
+			var subEvent = &proto.SubscribeEvent{
 				SessionId: sub.sessionID,
 				Topic:     map[string]int32{iter.Topic(): iter.Qos()},
 			}
@@ -164,11 +165,11 @@ func (s *Snapshot) WriteSnapshot(header SnapshotHeader, topicTree *TopicTree, me
 			} else {
 				subEvent.Qos1StreamInfo = sub.streamInfo
 			}
-			data, err = proto.Marshal(subEvent)
+			data, err = pproto.Marshal(subEvent)
 			if err != nil {
 				log.Fatal(err)
 			}
-			if err := writerEvent(&Event{Data: data, Type: Event_SubscribeEvent}); err != nil {
+			if err := writerEvent(&proto.Event{Data: data, Type: proto.Event_SubscribeEvent}); err != nil {
 				log.Errorf("%+v\n", err)
 				return false
 			}
@@ -184,7 +185,7 @@ func (s *Snapshot) WriteSnapshot(header SnapshotHeader, topicTree *TopicTree, me
 		if err = packet.Write(&buffer); err != nil {
 			log.Fatal(err)
 		}
-		if err = writerEvent(&Event{Data: buffer.Bytes(), Type: Event_RetainMessageEvent}); err != nil {
+		if err = writerEvent(&proto.Event{Data: buffer.Bytes(), Type: proto.Event_RetainMessageEvent}); err != nil {
 			log.Error(err.Error())
 			return false
 		}
@@ -195,13 +196,13 @@ func (s *Snapshot) WriteSnapshot(header SnapshotHeader, topicTree *TopicTree, me
 	}
 
 	metaTree.Descend(func(item btree.Item) bool {
-		var event Event
+		var event proto.Event
 		switch obj := item.(type) {
 		case *subscriberStatus:
 			var err error
-			status := ClientStatusChangeEvent_Status(atomic.LoadInt32((*int32)(obj.status)))
-			event.Type = Event_ClientStatusChangeEvent
-			event.Data, err = proto.Marshal(&ClientStatusChangeEvent{Status: status, SessionID: obj.sessionID})
+			status := proto.ClientStatusChangeEvent_Status(atomic.LoadInt32((*int32)(obj.status)))
+			event.Type = proto.Event_ClientStatusChangeEvent
+			event.Data, err = pproto.Marshal(&proto.ClientStatusChangeEvent{Status: status, SessionID: obj.sessionID})
 			if err != nil {
 				log.Fatal(err)
 			}

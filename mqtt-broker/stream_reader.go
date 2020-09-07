@@ -16,7 +16,7 @@ package mqtt_broker
 import (
 	"context"
 	"github.com/akzj/streamIO/client"
-	"github.com/akzj/streamIO/meta-server/store"
+	"github.com/akzj/streamIO/proto"
 	"github.com/eclipse/paho.mqtt.golang/packets"
 	log "github.com/sirupsen/logrus"
 	"sync"
@@ -44,7 +44,7 @@ type streamPacketReader struct {
 }
 
 func newStreamPacketReader(ctx context.Context, sess *session,
-	item *store.StreamInfoItem, qos int32, client client.Client, offsetCommitter *offsetCommitter) (*streamPacketReader, error) {
+	item *proto. StreamInfoItem, qos int32, client client.Client, offsetCommitter *offsetCommitter) (*streamPacketReader, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	streamSession, reader, err := client.CreateSessionAndReader(ctx, sess.MQTTSessionInfo.SessionId, item)
 	if err != nil {

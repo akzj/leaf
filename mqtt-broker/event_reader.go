@@ -18,7 +18,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/akzj/streamIO/client"
-	"github.com/golang/protobuf/proto"
+	"github.com/akzj/streamIO/proto"
+	pproto "github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"io"
@@ -38,7 +39,7 @@ type EventReader struct {
 }
 
 type EventWithOffset struct {
-	event  proto.Message
+	event  pproto.Message
 	offset int64
 }
 
@@ -99,24 +100,24 @@ func (eReader *EventReader) readEventLoop() {
 			log.Errorf("%+v\n", err)
 			return
 		}
-		var event Event
-		if err := proto.Unmarshal(data, &event); err != nil {
+		var event proto.Event
+		if err := pproto.Unmarshal(data, &event); err != nil {
 			log.Panic(err)
 		}
-		var message proto.Message
+		var message pproto.Message
 		switch event.Type {
-		case Event_SubscribeEvent:
-			message = &SubscribeEvent{}
-		case Event_UnSubscribeEvent:
-			message = &UnSubscribeEvent{}
-		case Event_RetainMessageEvent:
-			message = &RetainMessageEvent{}
-		case Event_ClientStatusChangeEvent:
-			message = &ClientStatusChangeEvent{}
+		case proto.Event_SubscribeEvent:
+			message = &proto.SubscribeEvent{}
+		case proto.Event_UnSubscribeEvent:
+			message = &proto.UnSubscribeEvent{}
+		case proto.Event_RetainMessageEvent:
+			message = &proto.RetainMessageEvent{}
+		case proto.Event_ClientStatusChangeEvent:
+			message = &proto.ClientStatusChangeEvent{}
 		default:
 			panic(fmt.Sprintf("unknown event type %d %s", event.Type, event.Data))
 		}
-		if err := proto.Unmarshal(event.Data, message); err != nil {
+		if err := pproto.Unmarshal(event.Data, message); err != nil {
 			log.Panic(err)
 		}
 		offset := eReader.reader.Offset()

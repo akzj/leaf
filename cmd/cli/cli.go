@@ -18,7 +18,6 @@ import (
 	"crypto/md5"
 	"fmt"
 	"github.com/akzj/streamIO/client"
-	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/fatih/color"
@@ -45,8 +44,8 @@ func addStreamServer(metaServer string, id int64, addr string) error {
 	}
 	_, err = client.AddStreamServer(ctx,
 		&proto.AddStreamServerRequest{
-			StreamServerInfoItem: &store.StreamServerInfoItem{
-				Base: &store.ServerInfoBase{
+			StreamServerInfoItem: &proto.StreamServerInfoItem{
+				Base: &proto.ServerInfoBase{
 					Id:   id,
 					Addr: addr},
 			},

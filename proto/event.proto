@@ -12,11 +12,9 @@
 // limitations under the License.
 
 syntax = "proto3";
-import "github.com/akzj/streamIO/meta-server/store/items.proto";
-
-package mqtt_broker;
-
-option go_package = "github.com/akzj/streamIO/mqtt-broker;mqtt_broker";
+package proto;
+option go_package = "github.com/akzj/streamIO/proto;proto";
+import "streamIO/proto/items.proto";
 
 message Event {
   bytes data = 1;

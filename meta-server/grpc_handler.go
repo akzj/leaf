@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/akzj/mmdb"
-	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
 	"github.com/golang/protobuf/ptypes/empty"
 	log "github.com/sirupsen/logrus"
@@ -80,7 +79,7 @@ func (server *MetaServer) ListStreamServer(_ context.Context, _ *empty.Empty) (*
 	return &proto.ListStreamServerResponse{Items: streamServerInfoItems}, nil
 }
 
-func (server *MetaServer) GetStreamServer(_ context.Context, request *proto.GetStreamServerRequest) (*store.StreamServerInfoItem, error) {
+func (server *MetaServer) GetStreamServer(_ context.Context, request *proto.GetStreamServerRequest) (*proto.StreamServerInfoItem, error) {
 	item, err := server.store.GetStreamServerInfo(request.StreamServerID)
 	if err != nil {
 		log.Warning(err.Error())
@@ -164,7 +163,7 @@ func (server *MetaServer) GetStreamReadOffset(_ context.Context, request *proto.
 	return &proto.GetStreamReadOffsetResponse{SSOffset: offset}, nil
 }
 
-func (server *MetaServer) GetOrCreateMQTTClientSession(ctx context.Context,
+func (server *MetaServer) GetOrCreateMQTTClientSession(_ context.Context,
 	request *proto.GetOrCreateMQTTClientSessionRequest) (*proto.GetOrCreateMQTTClientSessionResponse, error) {
 	item, create, err := server.store.GetOrCreateMQTTSession(request.ClientIdentifier)
 	if err != nil {
@@ -178,7 +177,7 @@ func (server *MetaServer) GetOrCreateMQTTClientSession(ctx context.Context,
 	}, nil
 }
 
-func (server *MetaServer) DeleteMQTTClientSession(ctx context.Context,
+func (server *MetaServer) DeleteMQTTClientSession(_ context.Context,
 	request *proto.DeleteMQTTClientSessionRequest) (*proto.DeleteMQTTClientSessionResponse, error) {
 	item, err := server.store.DeleteMQTTClientSession(request.ClientIdentifier)
 	if err != nil {
@@ -190,7 +189,7 @@ func (server *MetaServer) DeleteMQTTClientSession(ctx context.Context,
 	}, nil
 }
 
-func (server *MetaServer) UpdateMQTTClientSession(ctx context.Context, request *proto.UpdateMQTTClientSessionRequest) (*empty.Empty, error) {
+func (server *MetaServer) UpdateMQTTClientSession(_ context.Context, request *proto.UpdateMQTTClientSessionRequest) (*empty.Empty, error) {
 	if err := server.store.UpdateMQTTClientSession(request.ClientIdentifier,
 		request.UnSubscribe,
 		request.Subscribe); err != nil {

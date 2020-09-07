@@ -14,7 +14,6 @@
 package stream_server
 
 import (
-	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/akzj/streamIO/proto"
 	"github.com/golang/protobuf/ptypes/timestamp"
 	log "github.com/sirupsen/logrus"
@@ -40,7 +39,7 @@ func (server *StreamServer) heartbeatLoop() {
 				}
 			}
 			now := time.Now()
-			var heartbeat store.StreamServerHeartbeatItem
+			var heartbeat proto.StreamServerHeartbeatItem
 			heartbeat.Base = server.ServerInfoBase
 			heartbeat.Timestamp = &timestamp.Timestamp{
 				Seconds: now.Unix(),
