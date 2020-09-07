@@ -1,7 +1,6 @@
 # mmdb
 
-## 内存键值DB,数据存储在btree
-* 支持日志持久化,快照防止数据丢失
-* 支持ACID事务
-* MVCC并发多读多写(读写互不堵塞对方)
-
+* base on google btree
+* support snapshot to disk
+* support ACID transaction
+* support MVCC multi routines read/write without block each other
