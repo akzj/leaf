@@ -2,13 +2,19 @@ package mqtt_broker
 
 import (
 	"context"
+	"fmt"
 	"github.com/akzj/streamIO/client"
 	"github.com/akzj/streamIO/meta-server/store"
 	"github.com/eclipse/paho.mqtt.golang/packets"
 	log "github.com/sirupsen/logrus"
 	"sync"
 	"sync/atomic"
+	"time"
 )
+
+type Offset interface {
+	commitOffset()
+}
 
 type streamPacketReader struct {
 	ackMapLocker    sync.Mutex
@@ -26,13 +32,13 @@ type streamPacketReader struct {
 }
 
 func newStreamPacketReader(ctx context.Context, sess *session,
-	item *store.StreamInfoItem, qos int32, client client.Client) (*streamPacketReader, error) {
+	item *store.StreamInfoItem, qos int32, client client.Client, offsetCommitter *offsetCommitter) (*streamPacketReader, error) {
+	ctx, cancel := context.WithCancel(ctx)
 	streamSession, reader, err := client.CreateSessionAndReader(ctx, sess.MQTTSessionInfo.SessionId, item)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	return &streamPacketReader{
+	streamPacketReader := &streamPacketReader{
 		ackMapLocker:    sync.Mutex{},
 		ackMap:          map[uint16]int64{},
 		Reader:          reader,
@@ -43,11 +49,19 @@ func newStreamPacketReader(ctx context.Context, sess *session,
 		Qos:             qos,
 		sess:            sess,
 		ctx:             ctx,
-		cancel:          cancel,
-	}, nil
+	}
+	offsetCommitter.AddCommitOffset(streamPacketReader)
+	var isCancel int32
+	streamPacketReader.cancel = func() {
+		if atomic.CompareAndSwapInt32(&isCancel, 0, 1) {
+			offsetCommitter.Delete(streamPacketReader)
+			cancel()
+		}
+	}
+	return streamPacketReader, nil
 }
 
-func (spp *streamPacketReader) commitOffsetLoop() {
+func (spp *streamPacketReader) commitOffset() {
 	ackOffset := atomic.LoadInt64(&spp.AckOffset)
 	if ackOffset == atomic.LoadInt64(&spp.committedOffset) {
 		return
@@ -63,6 +77,12 @@ func (spp *streamPacketReader) commitOffsetLoop() {
 }
 
 func (spp *streamPacketReader) readPacketLoop() error {
+	ts := time.Now()
+	defer func() {
+		_ = spp.Reader.Close()
+		spp.cancel()
+		spp.commitOffset()
+	}()
 	for {
 		controlPacket, err := packets.ReadPacket(spp.Reader)
 		if err != nil {
@@ -84,6 +104,7 @@ func (spp *streamPacketReader) readPacketLoop() error {
 				spp.ackMap[packet.MessageID] = spp.Offset
 				spp.ackMapLocker.Unlock()
 			}
+			fmt.Println(ts)
 			if err := spp.sess.handleOutPublishPacket(packet); err != nil {
 				return err
 			}
@@ -101,4 +122,45 @@ func (spp *streamPacketReader) handleAck(id uint16) {
 		atomic.StoreInt64(&spp.AckOffset, offset)
 	}
 	spp.ackMapLocker.Unlock()
+}
+
+type offsetCommitter struct {
+	locker  sync.Mutex
+	offsets map[Offset]struct{}
+}
+
+func newOffsetCommitter() *offsetCommitter {
+	return &offsetCommitter{
+		locker:  sync.Mutex{},
+		offsets: map[Offset]struct{}{},
+	}
+}
+
+func (committer *offsetCommitter) AddCommitOffset(offset Offset) {
+	committer.locker.Lock()
+	defer committer.locker.Unlock()
+	committer.offsets[offset] = struct{}{}
+}
+
+func (committer *offsetCommitter) Delete(offset Offset) {
+	committer.locker.Lock()
+	defer committer.locker.Unlock()
+	delete(committer.offsets, offset)
+}
+
+func (committer *offsetCommitter) commitLoop(ctx context.Context, interval time.Duration) {
+	tick := time.NewTicker(interval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		committer.locker.Lock()
+		for offset := range committer.offsets {
+			offset.commitOffset()
+		}
+		committer.locker.Unlock()
+	}
 }

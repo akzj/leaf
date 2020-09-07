@@ -143,9 +143,13 @@ func (s *Snapshot) WriteSnapshot(header SnapshotHeader, topicTree *TopicTree, me
 		for _, iter := range subscribers {
 			sub := iter.(*subscriber)
 			var subEvent = &SubscribeEvent{
-				SessionId:  sub.sessionID,
-				StreamInfo: sub.streamInfo,
-				Topic:      map[string]int32{iter.Topic(): iter.Qos()},
+				SessionId: sub.sessionID,
+				Topic:     map[string]int32{iter.Topic(): iter.Qos()},
+			}
+			if iter.Qos() == 0 {
+				subEvent.Qos0StreamInfo = sub.streamInfo
+			} else {
+				subEvent.Qos1StreamInfo = sub.streamInfo
 			}
 			data, err = proto.Marshal(subEvent)
 			if err != nil {

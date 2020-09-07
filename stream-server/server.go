@@ -37,6 +37,7 @@ func New(options Options) *StreamServer {
 	log.SetOutput(file)
 	log.SetLevel(options.LogLevel)
 	log.SetFormatter(&log.TextFormatter{DisableQuote: true})
+	log.SetReportCaller(true)
 	ctx, cancel := context.WithCancel(context.Background())
 	return &StreamServer{
 		Options: options,

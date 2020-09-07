@@ -50,6 +50,8 @@ type Broker struct {
 	cancel context.CancelFunc
 
 	listener []net.Listener
+
+	offsetCommitter *offsetCommitter
 }
 
 func New(options Options) *Broker {
@@ -62,6 +64,7 @@ func New(options Options) *Broker {
 		log.SetOutput(file)
 	}
 	log.SetFormatter(&log.TextFormatter{DisableQuote: true})
+	log.SetReportCaller(true)
 	ctx, cancel := context.WithCancel(context.Background())
 	metaServerClient, err := client.NewMetaServiceClient(ctx, options.MetaServerAddr)
 	if err != nil {
@@ -90,23 +93,24 @@ func New(options Options) *Broker {
 	}
 
 	broker := &Broker{
-		Options:        options,
-		tlsConfig:      nil,
-		sessionsLocker: sync.Mutex{},
-		sessions:       map[string]*session{},
-		topicTree:      unsafe.Pointer(NewTopicTree()),
-		metaTree:       btree.New(10),
-		eventReader:    eventWatcher,
-		eventQueue:     eventQueue,
-		client:         cli,
-		eventOffset:    0,
-		treeChanges:    0,
-		isCheckpoint:   0,
-		eventWriter:    eventWriter,
-		snapshot:       NewSnapshot(options.SnapshotPath),
-		ctx:            ctx,
-		cancel:         cancel,
-		listener:       nil,
+		Options:         options,
+		tlsConfig:       nil,
+		sessionsLocker:  sync.Mutex{},
+		sessions:        map[string]*session{},
+		topicTree:       unsafe.Pointer(NewTopicTree()),
+		metaTree:        btree.New(10),
+		eventReader:     eventWatcher,
+		eventQueue:      eventQueue,
+		client:          cli,
+		eventOffset:     0,
+		treeChanges:     0,
+		isCheckpoint:    0,
+		eventWriter:     eventWriter,
+		snapshot:        NewSnapshot(options.SnapshotPath),
+		ctx:             ctx,
+		cancel:          cancel,
+		listener:        nil,
+		offsetCommitter: newOffsetCommitter(),
 	}
 
 	return broker
@@ -120,6 +124,7 @@ func (broker *Broker) Start() error {
 	if err := broker.clientListenLoop(); err != nil {
 		log.Fatal(err.Error())
 	}
+	go broker.offsetCommitter.commitLoop(broker.ctx, broker.ReadOffsetCommitInterval)
 	broker.processEventLoop()
 	return nil
 }
@@ -310,34 +315,38 @@ func (broker Broker) getOrCreateSubscriber() {
 }
 
 func (broker *Broker) newSubscriber(event *SubscribeEvent) ([]Subscriber, error) {
-	session, err := broker.client.NewStreamSession(context.Background(), event.SessionId, event.StreamInfo)
-	if err != nil {
-		return nil, err
-	}
-	writer, err := session.NewWriter()
-	if err != nil {
-		return nil, err
-	}
 	item := broker.metaTree.Get(&subscriberStatus{sessionID: event.SessionId})
 	if item == nil {
 		return nil, fmt.Errorf("no find session status")
 	}
 	var subscribers []Subscriber
 	for topic, qos := range event.Topic {
+		streamInfo := event.Qos0StreamInfo
+		if qos == 1 {
+			streamInfo = event.Qos1StreamInfo
+		}
+		session, err := broker.client.NewStreamSession(context.Background(), event.SessionId, streamInfo)
+		if err != nil {
+			return nil, err
+		}
+		writer, err := session.NewWriter()
+		if err != nil {
+			return nil, err
+		}
 		subscribers = append(subscribers, &subscriber{
 			streamWriter: writer,
 			sessionID:    event.SessionId,
 			qos:          qos,
 			topic:        topic,
 			status:       item.(*subscriberStatus),
-			streamInfo:   event.StreamInfo,
+			streamInfo:   streamInfo,
 		})
 	}
 	return subscribers, nil
 }
 
 func (broker *Broker) handleSubscribeEvent(event *SubscribeEvent) {
-	fmt.Println(event.Topic)
+	log.WithField("event", event).Info("handleSubscribeEvent")
 	tree := broker.getSubscribeTree().Clone()
 	broker.insertSubscriber2Tree(tree, event)
 	broker.setSubscribeTree(tree)
@@ -346,7 +355,7 @@ func (broker *Broker) handleSubscribeEvent(event *SubscribeEvent) {
 func (broker *Broker) insertSubscriber2Tree(tree *TopicTree, event *SubscribeEvent) {
 	subs, err := broker.newSubscriber(event)
 	if err != nil {
-		log.Error(err.Error())
+		log.Errorf("%+v", err)
 		return
 	}
 	for _, sub := range subs {
@@ -356,6 +365,7 @@ func (broker *Broker) insertSubscriber2Tree(tree *TopicTree, event *SubscribeEve
 }
 
 func (broker *Broker) handleUnSubscribeEvent(event *UnSubscribeEvent) {
+	log.WithField("event", event).Info("handleUnSubscribeEvent")
 	tree := broker.getSubscribeTree().Clone()
 	for _, topic := range event.Topic {
 		tree.Delete(&subscriber{topic: topic, sessionID: event.SessionId})
@@ -364,6 +374,7 @@ func (broker *Broker) handleUnSubscribeEvent(event *UnSubscribeEvent) {
 }
 
 func (broker *Broker) handleRetainMessageEvent(event *RetainMessageEvent) {
+	log.WithField("event", event).Info("handleRetainMessageEvent")
 	tree := broker.getSubscribeTree().Clone()
 	_ = broker.insertRetainMessage2Tree(tree, event)
 	broker.setSubscribeTree(tree)
@@ -468,14 +479,11 @@ func (broker *Broker) sendEvent(message proto.Message) error {
 
 func (broker *Broker) handleSubscribePacket(sessionItem *store.MQTTSessionItem,
 	packet *packets.SubscribePacket) error {
-	streamInfoItem := sessionItem.Qos1StreamInfo
-	if packet.Qos == 0 {
-		streamInfoItem = sessionItem.Qos0StreamInfo
-	}
 	event := SubscribeEvent{
-		SessionId:  sessionItem.SessionId,
-		StreamInfo: streamInfoItem,
-		Topic:      map[string]int32{},
+		SessionId:      sessionItem.SessionId,
+		Qos0StreamInfo: sessionItem.Qos0StreamInfo,
+		Qos1StreamInfo: sessionItem.Qos1StreamInfo,
+		Topic:          map[string]int32{},
 	}
 	for index, topic := range packet.Topics {
 		qos := packet.Qoss[index]
@@ -517,6 +525,7 @@ func (broker *Broker) handleClientStatusChange(sessionID int64, offline ClientSt
 }
 
 func (broker *Broker) handleClientStatusChangeEvent(event *ClientStatusChangeEvent) {
+	log.WithField("event", event).Info("handleClientStatusChangeEvent")
 	item := broker.metaTree.Get(&subscriberStatus{
 		sessionID: event.SessionID,
 		status:    &event.Status,

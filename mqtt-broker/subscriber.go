@@ -37,9 +37,14 @@ func (s *subscriber) Topic() string {
 
 func (s *subscriber) writePacket(packet *packets.PublishPacket, callback func(err error)) {
 	if s.Online() == false && packet.Qos == 0 {
+		log.WithField("sessionID", s.sessionID).Info("session offline,skip qos0 message")
 		callback(nil)
 		return
 	}
+	log.WithField("session", s.sessionID).
+		WithField("streamInfo", s.streamInfo).
+		WithField("topic", packet.TopicName).
+		WithField("Qos", packet.Qos).Info("write packet")
 	var buffer bytes.Buffer
 	if err := packet.Write(&buffer); err != nil {
 		log.Fatalf("%+v", err)

@@ -247,10 +247,16 @@ func mqttSub(brokerAddr string, topic string, clientID string) error {
 		panic(token.Error())
 	}
 
-	if token := c.Subscribe(topic, 0, nil); token.Wait() && token.Error() != nil {
-		fmt.Println(token.Error())
-		os.Exit(1)
+	for {
+		if token := c.Subscribe(topic, 0, nil); token.Wait() && token.Error() != nil {
+			fmt.Println(token.Error())
+			os.Exit(1)
+		}
+		time.Sleep(time.Second * 3)
+		c.Unsubscribe(topic).Wait()
+		time.Sleep(time.Second * 3)
 	}
+
 	select {}
 }
 
@@ -275,6 +281,7 @@ func mqttPub(brokerAddr string, topic string, clientID string, count int) error 
 		if token.Error() != nil {
 			return token.Error()
 		}
+		time.Sleep(time.Millisecond *100)
 	}
 	c.Disconnect(250)
 	return nil

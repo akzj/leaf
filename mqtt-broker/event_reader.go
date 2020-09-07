@@ -68,7 +68,6 @@ func newEventReader(sessionID int64, client client.Client, callback eventCallbac
 }
 
 func (eReader *EventReader) handleEvent(event EventWithOffset) {
-	log.WithField("event", event.event).Info("handleEvent")
 	eReader.callback(event)
 }
 

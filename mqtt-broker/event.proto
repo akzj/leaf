@@ -18,7 +18,8 @@ message Event {
 
 message SubscribeEvent{
   int64 session_id = 1;
-  StreamInfoItem stream_info = 2;
+  StreamInfoItem qos0_stream_info = 2;
+  StreamInfoItem qos1_stream_info = 3;
   map<string, int32> topic = 4;
 }
 

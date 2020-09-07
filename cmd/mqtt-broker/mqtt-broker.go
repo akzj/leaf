@@ -5,6 +5,7 @@ import (
 )
 
 func main() {
+
 	if err := broker.New(broker.DefaultOptions()).Start(); err != nil {
 		panic(err)
 	}

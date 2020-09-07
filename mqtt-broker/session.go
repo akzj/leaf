@@ -55,6 +55,10 @@ func newSession(broker *Broker,
 	if err != nil {
 		return nil, err
 	}
+	if info.Topics == nil {
+		info.Topics = make(map[string]int32)
+	}
+
 	PPrintln(info)
 	_, end, err := client.GetStreamStat(ctx, info.Qos0StreamInfo)
 	if err != nil {
@@ -93,7 +97,7 @@ func (sess *session) startStreamPacketReader(qos int32) {
 		return
 	}
 	packetReader, err := newStreamPacketReader(sess.ctx, sess,
-		sess.MQTTSessionInfo.Qos0StreamInfo, qos, sess.client)
+		sess.MQTTSessionInfo.Qos0StreamInfo, qos, sess.client, sess.broker.offsetCommitter)
 	if err != nil {
 		_ = sess.Close()
 		log.Errorf("%+v", err)
@@ -298,6 +302,7 @@ func (sess *session) handleSubscribePacket(packet *packets.SubscribePacket) erro
 			qos = 1
 		}
 		sess.startStreamPacketReader(int32(qos))
+		sess.MQTTSessionInfo.Topics[packet.Topics[index]] = int32(qos)
 		subAck.ReturnCodes = append(subAck.ReturnCodes, qos)
 	}
 	if err := sess.sendPacket(subAck); err != nil {
@@ -317,8 +322,17 @@ func (sess *session) handlePingReqPacket(_ *packets.PingreqPacket) error {
 }
 
 func (sess *session) handleUnsubscribePacket(packet *packets.UnsubscribePacket) error {
+	var find = false
 	for _, topic := range packet.Topics {
-		delete(sess.MQTTSessionInfo.Topics, topic)
+		if _, ok := sess.MQTTSessionInfo.Topics[topic]; ok {
+			delete(sess.MQTTSessionInfo.Topics, topic)
+			find = true
+		}
+	}
+	if find == false {
+		ack := packets.NewControlPacket(packets.Suback).(*packets.SubackPacket)
+		ack.MessageID = packet.MessageID
+		return sess.sendPacket(ack)
 	}
 	for qos, reader := range sess.streamPacketReaders {
 		if reader == nil {
@@ -333,8 +347,8 @@ func (sess *session) handleUnsubscribePacket(packet *packets.UnsubscribePacket) 
 		if find == false {
 			log.Infof("close qos %d streamPacketReader", qos)
 			reader.Close()
+			sess.streamPacketReaders[qos] = nil
 		}
-		sess.streamPacketReaders[qos] = nil
 	}
 	if err := sess.broker.handleUnSubscribePacket(sess.MQTTSessionInfo, packet); err != nil {
 		return err
