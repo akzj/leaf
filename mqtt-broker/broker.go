@@ -22,15 +22,17 @@ import (
 	"github.com/akzj/block-queue"
 	"github.com/akzj/streamIO/client"
 	"github.com/akzj/streamIO/meta-server/store"
+	"github.com/akzj/streamIO/pkg/utils"
 	"github.com/eclipse/paho.mqtt.golang/packets"
 	"github.com/golang/protobuf/proto"
 	"github.com/google/btree"
+	"github.com/gorilla/websocket"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,7 +41,8 @@ import (
 
 type Broker struct {
 	Options
-	tlsConfig *tls.Config
+	tlsConfig   *tls.Config
+	WSTLSConfig *tls.Config
 
 	sessionsLocker sync.Mutex
 	sessions       map[string]*session
@@ -134,8 +137,11 @@ func (broker *Broker) Start() error {
 		return err
 	}
 	go broker.eventReader.readEventLoop()
-	if err := broker.clientListenLoop(); err != nil {
-		log.Fatal(err.Error())
+	if err := broker.clientTCPListenLoop(); err != nil {
+		return err
+	}
+	if err := broker.webSocketListenLoop(); err != nil {
+		return err
 	}
 	go broker.offsetCommitter.commitLoop(broker.ctx, broker.ReadOffsetCommitInterval)
 	broker.processEventLoop()
@@ -148,32 +154,6 @@ func (broker *Broker) getSubscribeTree() *TopicTree {
 
 func (broker *Broker) setSubscribeTree(tree *TopicTree) {
 	atomic.StorePointer(&broker.topicTree, unsafe.Pointer(tree))
-}
-
-func (broker *Broker) newListener() ([]net.Listener, error) {
-	var listeners []net.Listener
-	if broker.BindPort != 0 {
-		listener, err := net.Listen("tcp",
-			net.JoinHostPort(broker.HOST, strconv.Itoa(broker.BindPort)))
-		if err != nil {
-			log.WithField("broker.BindPort", broker.BindPort).Error(err)
-			return nil, err
-		}
-		listeners = append(listeners, listener)
-	}
-	if broker.BindTLSPort != 0 {
-		listener, err := tls.Listen("tcp",
-			net.JoinHostPort(broker.HOST, strconv.Itoa(broker.BindPort)), broker.tlsConfig)
-		if err != nil {
-			log.WithField("broker.BindTLSPort", broker.BindPort).Error(err)
-			return nil, err
-		}
-		listeners = append(listeners, listener)
-	}
-	if listeners == nil {
-		return nil, errors.New("no listeners")
-	}
-	return listeners, nil
 }
 
 func (broker *Broker) deleteSession(identifier string) error {
@@ -304,13 +284,46 @@ func (broker *Broker) serve(listener net.Listener) {
 	}
 }
 
-func (broker *Broker) clientListenLoop() error {
-	listeners, err := broker.newListener()
-	if err != nil {
-		return err
+func (broker *Broker) webSocketListenLoop() error {
+	if broker.WSPort != 0 {
+		l, err := utils.NewListener(broker.HOST, broker.WSPort, nil)
+		if err != nil {
+			return err
+		}
+		go func() {
+			if err := http.Serve(l, broker); err != nil {
+				log.Fatalf("%+v", err)
+			}
+		}()
 	}
-	for _, listener := range listeners {
-		go broker.serve(listener)
+	if broker.WSSPort != 0 {
+		l, err := utils.NewListener(broker.HOST, broker.WSSPort, broker.WSTLSConfig)
+		if err != nil {
+			return err
+		}
+		go func() {
+			if err := http.Serve(l, broker); err != nil {
+				log.Fatalf("%+v", err)
+			}
+		}()
+	}
+	return nil
+}
+
+func (broker *Broker) clientTCPListenLoop() error {
+	if broker.BindTLSPort != 0 {
+		l, err := utils.NewListener(broker.HOST, broker.BindTLSPort, broker.tlsConfig)
+		if err != nil {
+			return err
+		}
+		go broker.serve(l)
+	}
+	if broker.BindPort != 0 {
+		l, err := utils.NewListener(broker.HOST, broker.BindPort, nil)
+		if err != nil {
+			return err
+		}
+		go broker.serve(l)
 	}
 	return nil
 }
@@ -417,9 +430,9 @@ func (broker *Broker) processEventLoop() {
 				log.Fatalf("unknown event %+v\n", event)
 			}
 			broker.eventOffset = event.offset
-			broker.treeChanges++
+			atomic.AddInt64(&broker.treeChanges, 1)
 		}
-		if broker.treeChanges > broker.CheckpointEventSize {
+		if changes := atomic.LoadInt64(&broker.treeChanges); changes > broker.CheckpointEventSize {
 			if atomic.CompareAndSwapInt32(&broker.isCheckpoint, 0, 1) == false {
 				continue
 			}
@@ -428,7 +441,11 @@ func (broker *Broker) processEventLoop() {
 				defer func() {
 					atomic.StoreInt32(&broker.isCheckpoint, 0)
 				}()
-				broker.checkpoint(clone, broker.eventOffset)
+				if err := broker.checkpoint(clone, broker.eventOffset); err != nil {
+					log.WithError(err).Errorf("checkpoint failed")
+					return
+				}
+				atomic.AddInt64(&broker.treeChanges, -changes)
 				log.Infof("checkpoint success")
 			}()
 		}
@@ -548,4 +565,18 @@ func (broker *Broker) handleClientStatusChangeEvent(event *ClientStatusChangeEve
 	} else {
 		atomic.StoreInt32((*int32)(item.(*subscriberStatus).status), int32(event.Status))
 	}
+}
+
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+}
+
+func (broker *Broker) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	conn, err := upgrader.Upgrade(writer, request, nil)
+	if err != nil {
+		log.Errorf("%+v\n", err)
+		return
+	}
+	broker.handleConnection(newWSConn(conn))
 }

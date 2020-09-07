@@ -357,7 +357,7 @@ func main() {
 					&cli.StringFlag{
 						Name:  "broker",
 						Usage: "--broker [broker addr],eg : --broker tcp://127.0.0.1:8000",
-						Value: "tcp://127.0.0.1:8000",
+						Value: "ws://127.0.0.1:9000",
 					},
 					&cli.StringFlag{
 						Name:  "topic",

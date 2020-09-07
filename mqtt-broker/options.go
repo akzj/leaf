@@ -21,6 +21,8 @@ import (
 type Options struct {
 	MetaServerAddr           string        `json:"meta_server_addr"`
 	HOST                     string        `json:"host"`
+	WSPort                   int           `json:"ws_port"`
+	WSSPort                  int           `json:"wss_port"`
 	BindPort                 int           `json:"bind_port"`
 	BindTLSPort              int           `json:"bind_tls_port"`
 	DefaultKeepalive         uint16        `json:"default_keepalive"`
@@ -37,11 +39,13 @@ func DefaultOptions() Options {
 	return Options{
 		MetaServerAddr:           "127.0.0.1:5000",
 		HOST:                     "0.0.0.0",
+		WSPort:                   9000,
+		WSSPort:                  0,
 		BindPort:                 8000,
 		BindTLSPort:              0,
 		DefaultKeepalive:         300,
 		MinKeepalive:             60,
-		CheckpointEventSize:      100,
+		CheckpointEventSize:      10,
 		SnapshotPath:             "mqtt-broker-snapshot",
 		BrokerId:                 8000,
 		LogFile:                  "log/mqtt-broker.log",
@@ -91,9 +95,5 @@ func (options Options) WithBrokerId(val int64) Options {
 
 func (options Options) WithLogFile(val string) Options {
 	options.LogFile = val
-	return options
-}
-func (options Options) WithLogLevel(val logrus.Level) Options {
-	options.LogLevel = val
 	return options
 }
