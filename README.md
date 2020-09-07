@@ -10,7 +10,7 @@ steamIO is a high performance message system, support `MQTT/amqp/stomp` standard
 
 
 ## stream-server
-stream-server is stream store,it is key value store base.it is really stream base store.it appends data only.
+stream-server is stream store,it is not base on kv store.it is really stream base store.it appends data only.
 it is sample,but it is high performance for streaming base system.
 
 
