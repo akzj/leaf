@@ -1,0 +1,42 @@
+syntax = "proto3";
+import "github.com/akzj/streamIO/meta-server/store/items.proto";
+
+package mqtt_broker;
+
+option go_package = "github.com/akzj/streamIO/mqtt-broker;mqtt_broker";
+
+message Event {
+  bytes data = 1;
+  enum Type {
+    SubscribeEvent = 0;
+    UnSubscribeEvent = 1;
+    RetainMessageEvent = 2;
+    ClientStatusChangeEvent = 3;
+  }
+  Type type = 2 ;
+}
+
+message SubscribeEvent{
+  int64 session_id = 1;
+  StreamInfoItem qos0_stream_info = 2;
+  StreamInfoItem qos1_stream_info = 3;
+  map<string, int32> topic = 4;
+}
+
+message UnSubscribeEvent{
+  int64 session_id = 2;
+    repeated  string  topic = 4;
+}
+
+message RetainMessageEvent {
+  bytes data = 1;
+}
+
+message ClientStatusChangeEvent{
+  enum Status{
+    Online = 0;
+    Offline = 1;
+  };
+  int64 sessionID = 1;
+  Status status = 2;
+}

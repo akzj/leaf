@@ -1,0 +1,105 @@
+syntax = "proto3";
+import "github.com/akzj/streamIO/meta-server/store/items.proto";
+import "google/protobuf/empty.proto";
+package proto;
+
+option go_package = "github.com/akzj/streamIO/proto;proto";
+
+//meta-server
+
+
+message ListStreamServerResponse{
+  repeated StreamServerInfoItem Items = 1;
+}
+
+message AddStreamServerRequest{
+  StreamServerInfoItem stream_server_info_item = 1;
+}
+
+message GetStreamServerRequest{
+  int64 streamServerID = 1;
+}
+
+message AddStreamServerResponse{
+  StreamServerInfoItem stream_server_info_item = 1;
+}
+
+message DeleteStreamServerRequest{
+  StreamServerInfoItem stream_server_info_item = 1;
+}
+
+message CreateStreamRequest{
+  string name = 1;
+}
+
+message CreateStreamResponse{
+  StreamInfoItem info = 1;
+}
+
+message GetStreamInfoRequest {
+  string Name = 1;
+}
+
+message GetStreamInfoResponse{
+  StreamInfoItem Info = 1;
+  bool create = 2;
+}
+
+message SetStreamReadOffsetRequest{
+  repeated SSOffsetItem SSOffsets = 1;
+}
+
+
+message GetStreamReadOffsetRequest{
+  int64 session_id = 1;
+  int64 stream_id = 2;
+}
+
+message GetStreamReadOffsetResponse{
+  SSOffsetItem SSOffset = 1;
+}
+
+message GetOrCreateMQTTClientSessionRequest{
+  string client_identifier = 2;
+}
+
+message GetOrCreateMQTTClientSessionResponse{
+  MQTTSessionItem sessionItem = 1;
+  bool Create = 2;
+}
+
+message DeleteMQTTClientSessionRequest{
+  string client_identifier = 1;
+}
+
+message DeleteMQTTClientSessionResponse{
+  MQTTSessionItem sessionItem = 1;
+}
+
+message UpdateMQTTClientSessionRequest{
+  string client_identifier = 1;
+  map<string, int32> subscribe = 2;
+  repeated string unSubscribe = 3;
+}
+
+service meta_service{
+  rpc AddStreamServer(AddStreamServerRequest)returns (AddStreamServerResponse){}
+  rpc ListStreamServer(google.protobuf.Empty)returns(ListStreamServerResponse){}
+  rpc GetStreamServer(GetStreamServerRequest)returns(StreamServerInfoItem){}
+  rpc DeleteStreamServer(DeleteStreamServerRequest)returns(google.protobuf.Empty){}
+
+  rpc StreamServerHeartbeat(stream StreamServerHeartbeatItem)returns(stream google.protobuf.Empty){}
+
+
+  rpc CreateStream(CreateStreamRequest)returns(CreateStreamResponse){}
+  rpc GetOrCreateStream(GetStreamInfoRequest)returns(GetStreamInfoResponse){}
+  rpc GetStreamInfo(GetStreamInfoRequest)returns(GetStreamInfoResponse){}
+
+  rpc SetStreamReadOffset(SetStreamReadOffsetRequest)returns(google.protobuf.Empty){}
+  rpc GetStreamReadOffset(GetStreamReadOffsetRequest)returns(GetStreamReadOffsetResponse){}
+
+  //mqtt
+  rpc GetOrCreateMQTTClientSession(GetOrCreateMQTTClientSessionRequest)returns(GetOrCreateMQTTClientSessionResponse){}
+  rpc DeleteMQTTClientSession(DeleteMQTTClientSessionRequest)returns(DeleteMQTTClientSessionResponse){}
+  rpc UpdateMQTTClientSession(UpdateMQTTClientSessionRequest)returns(google.protobuf.Empty){}
+}

@@ -1,0 +1,51 @@
+syntax = "proto3";
+import "google/protobuf/timestamp.proto";
+option go_package = "github.com/akzj/streamIO/meta-server/store;store";
+
+message StreamInfoItem {
+  int64 stream_id = 1;
+  string name = 2;
+  int64 stream_server_id = 3;
+}
+
+message MetaDataItem {
+  int32 key = 1;
+  int64 next_stream_id = 2;
+}
+
+message SSOffsetItem{
+  int64 session_id = 1;
+  int64 stream_id = 2;
+  int64 offset = 3;
+}
+
+
+message ServerInfoBase{
+  int64 id = 1;
+  bool leader = 2;
+  string addr = 3;
+}
+
+message StreamServerInfoItem{
+  ServerInfoBase base = 1;
+}
+
+message MetaServerInfoItem {
+  ServerInfoBase base = 1;
+}
+
+message StreamServerHeartbeatItem{
+  ServerInfoBase Base = 1;
+  google.protobuf.Timestamp Timestamp = 2;
+}
+
+
+message MQTTSessionItem {
+  StreamInfoItem  Qos1_stream_info = 1;
+  StreamInfoItem Qos0_stream_info = 2;
+  int64 session_id = 3;
+  string client_identifier = 4;
+  int64 create_ts = 5;
+  int64 access_ts = 6;
+  map<string, int32> topics = 7;
+}

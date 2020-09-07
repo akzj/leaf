@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package proto;
+option go_package = "github.com/akzj/streamIO/proto;proto";
+
+//stream operator
+
+message WriteStreamRequest{
+  int64 stream_id = 1;
+  int64 offset = 2;
+  bytes data = 3;
+  int64 request_id = 4;
+}
+
+message WriteStreamResponse{
+  int64 stream_id = 1;
+  int64 offset = 2;
+  int64 request_id = 3;
+  string err = 4;
+}
+
+message ReadStreamRequest {
+  int64 stream_id = 1;
+  int64 offset = 3;
+  int64 size = 4;
+  //add watcher to stream-server when stream no exist
+  bool watch = 5;
+}
+
+message ReadStreamResponse{
+  int64 offset = 3;
+  bytes Data = 4;
+}
+
+
+message GetStreamStatRequest {
+  int64 streamID = 1;
+}
+
+message GetStreamStatResponse{
+  int64 streamID = 1;
+  int64 begin = 2;
+  int64 end = 3;
+}
+
+service stream_service{
+  rpc WriteStream(stream WriteStreamRequest)returns(stream WriteStreamResponse){}
+  rpc ReadStream(ReadStreamRequest)returns(stream ReadStreamResponse){}
+  rpc GetStreamStat(GetStreamStatRequest)returns(GetStreamStatResponse){}
+}
