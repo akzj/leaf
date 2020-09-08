@@ -5,8 +5,6 @@ steamIO is a high performance message system, support `MQTT/amqp/stomp` standard
 * [x] stream-server
 * [x] meta-server
 * [x] mqtt-broker
-* [ ] amqp-broker
-* [ ] stomp-broker
 
 
 ## stream-server
@@ -22,6 +20,7 @@ meta-server is key value store,it saves all the metadata,includes streamInfo,rea
 mqtt-broker is support cluster,High Concurrency, horizontal scale-out mqtt server.
 * support Qos0,Qos1
 * support offline message(message store on stream-server)
+* support websocket
 
 ```
                                       mqtt-broker-|
@@ -32,3 +31,11 @@ mqtt-broker is support cluster,High Concurrency, horizontal scale-out mqtt serve
 |                |                                |
 mqtt-client   mqtt-client   ... mqtt-client-------|
 ```
+
+
+## todo
+* [ ] amqp-broker
+* [ ] stomp-broker
+* [ ] meta-server support raft replicate
+* [ ] stream-server support `master/slave`,`raft` replicate
+* [ ] web administration and monitoring tool 
