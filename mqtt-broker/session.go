@@ -27,7 +27,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 )
 
 type session struct {
@@ -193,28 +192,7 @@ func (sess *session) sendPacket(packet packets.ControlPacket) error {
 }
 
 func (sess *session) sendPacket2Subscribers(packet *packets.PublishPacket) error {
-	detail := packet.Details()
-	var errPointer unsafe.Pointer
-	var wg sync.WaitGroup
-	tree := sess.broker.getSubscribeTree()
-	for _, subMaps := range tree.Match(packet.TopicName) {
-		for _, sub := range subMaps {
-			wg.Add(1)
-			packet.Qos = byte(minQos(int32(detail.Qos), sub.Qos()))
-			sub.writePacket(packet, func(err error) {
-				if err != nil {
-					sess.log.Warn(err)
-					atomic.StorePointer(&errPointer, unsafe.Pointer(&err))
-				}
-				wg.Done()
-			})
-		}
-	}
-	wg.Wait()
-	if eObj := atomic.LoadPointer(&errPointer); eObj != nil {
-		return errors.WithStack(*(*error)(eObj))
-	}
-	return nil
+	return sess.broker.handlePublishPacket(packet)
 }
 
 func (sess *session) setWillMessage(packet *packets.PublishPacket) {
@@ -281,6 +259,8 @@ func (sess *session) handlePublishPacket(packet *packets.PublishPacket) error {
 
 func (sess *session) handleOutPublishPacket(packet *packets.PublishPacket) error {
 	log.Debugf("pub message %s topic %s ", string(packet.Payload), packet.TopicName)
+	atomic.AddInt64(&sess.broker.loadBytesSent, int64(len(packet.Payload)))
+	atomic.AddInt64(&sess.broker.messagesSent, 1)
 	if err := sess.sendPacket(packet); err != nil {
 		return err
 	}

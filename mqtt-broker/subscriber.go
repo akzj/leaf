@@ -67,6 +67,7 @@ func (s *subscriber) writePacket(packet *packets.PublishPacket, callback func(er
 
 type subscriberStatus struct {
 	sessionID int64
+	brokerId  int64
 	status    *proto.ClientStatusChangeEvent_Status
 }
 

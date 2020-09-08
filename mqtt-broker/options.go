@@ -19,6 +19,7 @@ import (
 )
 
 type Options struct {
+	SyncInterval             time.Duration `json:"sync_interval"`
 	MetaServerAddr           string        `json:"meta_server_addr"`
 	HOST                     string        `json:"host"`
 	WSPort                   int           `json:"ws_port"`
@@ -37,6 +38,7 @@ type Options struct {
 
 func DefaultOptions() Options {
 	return Options{
+		SyncInterval:             time.Second * 5,
 		MetaServerAddr:           "127.0.0.1:5000",
 		HOST:                     "0.0.0.0",
 		WSPort:                   9000,

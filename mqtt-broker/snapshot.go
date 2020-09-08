@@ -113,7 +113,11 @@ func (s *Snapshot) reloadSnapshot(broker *Broker) error {
 				log.Error(err)
 				return err
 			}
-			broker.handleClientStatusChangeEvent(&message)
+			broker.metaTree.ReplaceOrInsert(&subscriberStatus{
+				sessionID: message.SessionID,
+				brokerId:  message.BrokerId,
+				status:    &message.Status,
+			})
 		}
 	}
 }
