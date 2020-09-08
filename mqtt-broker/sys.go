@@ -186,6 +186,53 @@ func (sys *SYS) createMessagesPublishReceived() *packets.PublishPacket {
 	return packet
 }
 
+func (sys *SYS) createMessagesPublishSent() *packets.PublishPacket {
+	sys.messageID++
+	packet := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
+	packet.TopicName = messagesPublishSent
+	packet.MessageID = sys.messageID
+	packet.Payload = sys.toBytes(sys.broker.getMessagesPublishSent())
+	return packet
+}
+
+func (sys *SYS) createMessagesRetainedCount() *packets.PublishPacket {
+	sys.messageID++
+	packet := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
+	packet.TopicName = messagesRetainedCount
+	packet.MessageID = sys.messageID
+	packet.Payload = sys.toBytes(sys.broker.getMessagesRetainedCount())
+	return packet
+}
+
+func (sys *SYS) createSubscriptionsCount() *packets.PublishPacket {
+	sys.messageID++
+	packet := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
+	packet.TopicName = subscriptionsCount
+	packet.MessageID = sys.messageID
+	packet.Payload = sys.toBytes(sys.broker.SubscriptionsCount())
+	return packet
+}
+
+var uptimeTS = time.Now()
+
+func (sys *SYS) createUptime() *packets.PublishPacket {
+	sys.messageID++
+	packet := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
+	packet.TopicName = uptime
+	packet.MessageID = sys.messageID
+	packet.Payload = sys.toBytes(int64(time.Now().Sub(uptimeTS).Seconds()))
+	return packet
+}
+
+func (sys *SYS) createVersion() *packets.PublishPacket {
+	sys.messageID++
+	packet := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
+	packet.TopicName = version
+	packet.MessageID = sys.messageID
+	packet.Payload = []byte(Version)
+	return packet
+}
+
 func (sys *SYS) pubSys() {
 	for _, packet := range []*packets.PublishPacket{sys.createLoadBytesReceived(),
 		sys.createLoadBytesSent(),
@@ -194,7 +241,14 @@ func (sys *SYS) pubSys() {
 		sys.createClientsMaximum(),
 		sys.createClientsTotal(),
 		sys.createMessagesReceived(),
-		sys.createMessagesPublishDropped()} {
+		sys.createMessagesSent(),
+		sys.createMessagesPublishDropped(),
+		sys.createMessagesPublishReceived(),
+		sys.createMessagesPublishSent(),
+		sys.createMessagesRetainedCount(),
+		sys.createSubscriptionsCount(),
+		sys.createUptime(),
+		sys.createVersion()} {
 		if err := sys.broker.handlePublishPacket(packet); err != nil {
 			log.Error(err)
 		}

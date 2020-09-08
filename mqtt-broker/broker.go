@@ -71,11 +71,16 @@ type Broker struct {
 
 	offsetCommitter *offsetCommitter
 
-	messagesReceived        int64
-	messagesSent            int64
-	loadBytesSent           int64
-	loadBytesReceived       int64
+	messagesReceived int64
+	messagesSent     int64
+
+	loadBytesReceived int64
+	loadBytesSent     int64
+
 	messagesPublishReceived int64
+	messagesPublishSent     int64
+
+	sys *SYS
 }
 
 func New(options Options) *Broker {
@@ -153,6 +158,10 @@ func (broker *Broker) Start() error {
 	}
 	go broker.offsetCommitter.commitLoop(broker.ctx, broker.ReadOffsetCommitInterval)
 	broker.processEventLoop()
+	if broker.SysInterval != 0 {
+		broker.sys = newSysPub(broker)
+		broker.sys.pubLoop(broker.ctx, broker.SysInterval)
+	}
 	return nil
 }
 
@@ -361,6 +370,15 @@ func (broker *Broker) getClientsMaximum() int64 {
 	return atomic.LoadInt64(&broker.maxClientCount)
 }
 
+func (broker *Broker) getMessagesRetainedCount() int64 {
+	var count int64
+	broker.getSubscribeTree().RangeRetainMessage(func(packet *packets.PublishPacket) bool {
+		count++
+		return true
+	})
+	return count
+}
+
 func (broker *Broker) getClientsDisconnected() int64 {
 	min := &subscriberStatus{sessionID: 0}
 	max := &subscriberStatus{sessionID: math.MaxInt64}
@@ -374,6 +392,10 @@ func (broker *Broker) getClientsDisconnected() int64 {
 		return true
 	})
 	return count
+}
+
+func (broker *Broker) getMessagesPublishSent() int64 {
+	return atomic.LoadInt64(&broker.messagesPublishSent)
 }
 
 func (broker *Broker) getClientsTotal() int64 {
@@ -452,6 +474,19 @@ func (broker *Broker) getMessagesSent() int64 {
 	return atomic.LoadInt64(&broker.messagesSent)
 }
 
+func (broker *Broker) SubscriptionsCount() int64 {
+	var count int64
+	broker.getSubscribeTree().Walk(func(path string, subscribers map[int64]Subscriber) bool {
+		for _, sub := range subscribers {
+			if sub.BrokerID() == broker.BrokerId {
+				count++
+			}
+		}
+		return true
+	})
+	return count
+}
+
 func (broker *Broker) getMessagesPublishReceived() int64 {
 	return atomic.LoadInt64(&broker.messagesPublishReceived)
 }
@@ -464,6 +499,19 @@ func (broker *Broker) insertSubscriber2Tree(tree *TopicTree, event *proto.Subscr
 	}
 	for _, sub := range subs {
 		tree.Insert(sub)
+	}
+	//publish retain packets to new subscriber
+	for topic, qos := range event.Topic {
+		broker.getSubscribeTree().MatchRetainMessage(topic, func(packet *packets.PublishPacket) {
+			for _, it := range subs {
+				if it.Qos() == minQos(int32(packet.Qos), qos) {
+					it.writePacket(packet, func(err error) {
+						log.Error(err)
+					})
+					break
+				}
+			}
+		})
 	}
 }
 
@@ -585,12 +633,11 @@ func (broker *Broker) sendEvent(message pproto.Message) error {
 }
 
 func (broker *Broker) handlePublishPacket(packet *packets.PublishPacket) error {
-	atomic.AddInt64(&broker.loadBytesReceived, int64(len(packet.Payload)))
 	detail := packet.Details()
 	var errPointer unsafe.Pointer
 	var wg sync.WaitGroup
 	tree := broker.getSubscribeTree()
-	for _, subMaps := range tree.Match(packet.TopicName) {
+	for _, subMaps := range tree.MatchSubscribers(packet.TopicName) {
 		for _, sub := range subMaps {
 			wg.Add(1)
 			packet.Qos = byte(minQos(int32(detail.Qos), sub.Qos()))

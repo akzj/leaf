@@ -19,7 +19,6 @@ import (
 )
 
 type Options struct {
-	SyncInterval             time.Duration `json:"sync_interval"`
 	MetaServerAddr           string        `json:"meta_server_addr"`
 	HOST                     string        `json:"host"`
 	WSPort                   int           `json:"ws_port"`
@@ -34,11 +33,11 @@ type Options struct {
 	LogFile                  string        `json:"log_file"`
 	LogLevel                 logrus.Level  `json:"log_level"`
 	ReadOffsetCommitInterval time.Duration `json:"read_offset_commit_interval"`
+	SysInterval              time.Duration `json:"sys_interval"`
 }
 
 func DefaultOptions() Options {
 	return Options{
-		SyncInterval:             time.Second * 5,
 		MetaServerAddr:           "127.0.0.1:5000",
 		HOST:                     "0.0.0.0",
 		WSPort:                   9000,
@@ -53,6 +52,7 @@ func DefaultOptions() Options {
 		LogFile:                  "log/mqtt-broker.log",
 		LogLevel:                 logrus.InfoLevel,
 		ReadOffsetCommitInterval: time.Second,
+		SysInterval:              time.Second * 5,
 	}
 }
 
@@ -97,5 +97,10 @@ func (options Options) WithBrokerId(val int64) Options {
 
 func (options Options) WithLogFile(val string) Options {
 	options.LogFile = val
+	return options
+}
+
+func (options Options) WithSysInterval(val time.Duration) Options {
+	options.SysInterval = val
 	return options
 }

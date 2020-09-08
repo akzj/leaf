@@ -32,6 +32,10 @@ type subscriber struct {
 	streamInfo   *proto.StreamInfoItem
 }
 
+func (s *subscriber) BrokerID() int64 {
+	return s.status.brokerId
+}
+
 func (s *subscriber) Online() bool {
 	return s.status.Status() == proto.ClientStatusChangeEvent_Online
 }

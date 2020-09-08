@@ -47,6 +47,8 @@ type session struct {
 	log         *log.Entry
 
 	streamPacketReaders [2]*streamPacketReader
+
+	connWrap *connWrap
 }
 
 func PPrintln(obj interface{}) {
@@ -101,7 +103,30 @@ func newSession(broker *Broker,
 		log: log.WithField("remoteAddr", conn.RemoteAddr().
 			String()).WithField("clientIdentifier", clientIdentifier),
 		streamPacketReaders: [2]*streamPacketReader{},
+		connWrap: &connWrap{
+			conn:      conn,
+			writeSize: &broker.loadBytesSent,
+			readSize:  &broker.loadBytesReceived,
+		},
 	}, nil
+}
+
+type connWrap struct {
+	conn      net.Conn
+	writeSize *int64
+	readSize  *int64
+}
+
+func (f *connWrap) Read(p []byte) (n int, err error) {
+	n, err = f.conn.Read(p)
+	atomic.AddInt64(f.readSize, int64(n))
+	return n, err
+}
+
+func (f *connWrap) Write(p []byte) (n int, err error) {
+	n, err = f.conn.Write(p)
+	atomic.AddInt64(f.writeSize, int64(n))
+	return n, err
 }
 
 func (sess *session) startStreamPacketReader(qos int32) {
@@ -142,7 +167,7 @@ func (sess *session) readConnLoop() {
 			logEntry.Errorf("SetReadDeadline failed %s", err.Error())
 			return
 		}
-		packet, err := packets.ReadPacket(sess.conn)
+		packet, err := packets.ReadPacket(sess.connWrap)
 		if err != nil {
 			logEntry.Errorf("packets.ReadPacket failed %s", err.Error())
 			return
@@ -156,6 +181,7 @@ func (sess *session) readConnLoop() {
 }
 
 func (sess *session) handlePacket(controlPacket packets.ControlPacket) error {
+	atomic.AddInt64(&sess.broker.messagesReceived, 1)
 	switch packet := controlPacket.(type) {
 	case *packets.PubackPacket:
 		return sess.handlePubAckPacket(packet)
@@ -185,7 +211,8 @@ func minQos(q1, q2 int32) int32 {
 func (sess *session) sendPacket(packet packets.ControlPacket) error {
 	sess.connWLocker.Lock()
 	defer sess.connWLocker.Unlock()
-	if err := packet.Write(sess.conn); err != nil {
+	atomic.AddInt64(&sess.broker.messagesSent, 1)
+	if err := packet.Write(sess.connWrap); err != nil {
 		return errors.WithStack(err)
 	}
 	return nil
@@ -239,6 +266,7 @@ func (sess *session) handlePublishPacketQos2(packet *packets.PublishPacket) erro
 
 func (sess *session) handlePublishPacket(packet *packets.PublishPacket) error {
 	log.WithField("packet", packet).Debug("handlePublishPacket")
+	atomic.AddInt64(&sess.broker.messagesPublishReceived, 1)
 	if packet.Retain {
 		if err := sess.broker.handleRetainPacket(packet); err != nil {
 			sess.log.Errorf("%+v\n", err)
@@ -259,8 +287,7 @@ func (sess *session) handlePublishPacket(packet *packets.PublishPacket) error {
 
 func (sess *session) handleOutPublishPacket(packet *packets.PublishPacket) error {
 	log.Debugf("pub message %s topic %s ", string(packet.Payload), packet.TopicName)
-	atomic.AddInt64(&sess.broker.loadBytesSent, int64(len(packet.Payload)))
-	atomic.AddInt64(&sess.broker.messagesSent, 1)
+	atomic.AddInt64(&sess.broker.messagesPublishSent, 1)
 	if err := sess.sendPacket(packet); err != nil {
 		return err
 	}
