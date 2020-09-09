@@ -33,6 +33,7 @@ type Options struct {
 	LogFile                  string        `json:"log_file"`
 	LogLevel                 logrus.Level  `json:"log_level"`
 	ReadOffsetCommitInterval time.Duration `json:"read_offset_commit_interval"`
+	SysInterval              time.Duration `json:"sys_interval"`
 }
 
 func DefaultOptions() Options {
@@ -51,6 +52,7 @@ func DefaultOptions() Options {
 		LogFile:                  "log/mqtt-broker.log",
 		LogLevel:                 logrus.InfoLevel,
 		ReadOffsetCommitInterval: time.Second,
+		SysInterval:              time.Second * 5,
 	}
 }
 
@@ -95,5 +97,10 @@ func (options Options) WithBrokerId(val int64) Options {
 
 func (options Options) WithLogFile(val string) Options {
 	options.LogFile = val
+	return options
+}
+
+func (options Options) WithSysInterval(val time.Duration) Options {
+	options.SysInterval = val
 	return options
 }

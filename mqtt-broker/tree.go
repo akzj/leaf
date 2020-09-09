@@ -24,6 +24,7 @@ type Subscriber interface {
 	Topic() string
 	Qos() int32
 	Online() bool
+	BrokerID() int64
 	writePacket(packet *packets.PublishPacket, callback func(err error))
 }
 
@@ -123,6 +124,43 @@ func (n *Node) match(token string, remain string) []map[int64]Subscriber {
 	return subMaps
 }
 
+func (n *Node) matchRetainMessage(token string, remain string, f func(packet *packets.PublishPacket)) {
+	//fmt.Println("token", token, "remain", remain, "n.token", n.token, "path", n.path)
+	if len(token) == 0 && len(remain) == 0 {
+		if n.retain != nil {
+			f(n.retain)
+		}
+	}
+	if token == "#" {
+		//# == 0
+		{
+			token, remain := nextToken(remain)
+			n.matchRetainMessage(token, remain, f)
+		}
+		//# == 1 ==> +
+		{
+			token, remain := nextToken(remain)
+			for _, next := range n.next {
+				next.matchRetainMessage(token, remain, f)
+			}
+		}
+		// # > 1
+		for _, next := range n.next {
+			next.matchRetainMessage(token, remain, f)
+		}
+	} else if token == "+" {
+		token, remain := nextToken(remain)
+		for _, next := range n.next {
+			next.matchRetainMessage(token, remain, f)
+		}
+	} else {
+		if next, ok := n.next[token]; ok {
+			token, remain := nextToken(remain)
+			next.matchRetainMessage(token, remain, f)
+		}
+	}
+}
+
 func (n *Node) rangeRetainMessage(f func(packet *packets.PublishPacket) bool) bool {
 	if n.retain != nil {
 		if f(n.retain) == false {
@@ -214,9 +252,21 @@ func (tree *TopicTree) UpdateRetainPacket(packet *packets.PublishPacket) {
 	}
 }
 
-func (tree *TopicTree) Match(topic string) []map[int64]Subscriber {
+func (tree *TopicTree) MatchSubscribers(topic string) []map[int64]Subscriber {
 	token, remain := nextToken(topic)
 	return tree.root.match(token, remain)
+}
+
+func (tree *TopicTree) MatchRetainMessage(topic string, f func(packet *packets.PublishPacket)) {
+	var packetMap = map[interface{}]struct{}{}
+	token, remain := nextToken(topic)
+	tree.root.matchRetainMessage(token, remain, func(packet *packets.PublishPacket) {
+		if _, ok := packetMap[packet]; ok {
+			return
+		}
+		packetMap[packet] = struct{}{}
+		f(packet)
+	})
 }
 
 func (tree *TopicTree) Clone() *TopicTree {
@@ -263,7 +313,7 @@ func (tree *TopicTree) Delete(subscriber Subscriber) {
 	preNode := next
 	stack.Pop()
 	for node := stack.Pop(); node != nil; node = stack.Pop() {
-		if len(preNode.subscribers) > 0 {
+		if len(preNode.subscribers) > 0 || preNode.retain != nil {
 			return
 		}
 		delete(node.next, preNode.token)

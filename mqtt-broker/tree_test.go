@@ -29,6 +29,10 @@ type Sub struct {
 	topic string
 }
 
+func (s *Sub) BrokerID() int64 {
+	panic("implement me")
+}
+
 func (s *Sub) Qos() int32 {
 	panic("implement me")
 }
@@ -102,7 +106,7 @@ func TestNewTree(t *testing.T) {
 	s8 := newSub(8, "#")
 	tree.Insert(s8)
 
-	if ids := subMapIDs(tree.Match("1/2/3/4/5")); reflect.DeepEqual(ids, []int64{1, 2, 3, 4, 5, 6, 7, 8}) == false {
+	if ids := subMapIDs(tree.MatchSubscribers("1/2/3/4/5")); reflect.DeepEqual(ids, []int64{1, 2, 3, 4, 5, 6, 7, 8}) == false {
 		t.Fatal(ids)
 	}
 }
@@ -114,7 +118,7 @@ func TestMatch(t *testing.T) {
 	tree.Insert(newSub(3, "/+/#"))
 	tree.Insert(newSub(4, "/+/+"))
 
-	if ids := subMapIDs(tree.Match("/hello")); reflect.DeepEqual(ids, []int64{1, 2, 3, 4}) == false {
+	if ids := subMapIDs(tree.MatchSubscribers("/hello")); reflect.DeepEqual(ids, []int64{1, 2, 3, 4}) == false {
 		t.Fatal(ids)
 	}
 }
@@ -178,12 +182,64 @@ func TestDelete(t *testing.T) {
 	}
 }
 
+func newPublishPacket(topic string) *packets.PublishPacket {
+	packet := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
+	packet.TopicName = topic
+	packet.Payload = []byte("test")
+	return packet
+}
+func TestMatchRetainMessage(t *testing.T) {
+	tree := NewTopicTree()
+
+	tree.UpdateRetainPacket(newPublishPacket("1/1/1/1/1"))
+	tree.UpdateRetainPacket(newPublishPacket("1/2/3/4/5"))
+	tree.UpdateRetainPacket(newPublishPacket("2/3/4/5"))
+	tree.UpdateRetainPacket(newPublishPacket("3/4/5"))
+	tree.UpdateRetainPacket(newPublishPacket("4/5"))
+	tree.UpdateRetainPacket(newPublishPacket("5"))
+	tree.UpdateRetainPacket(newPublishPacket("1/2/3/4"))
+	tree.UpdateRetainPacket(newPublishPacket("1/2/3"))
+	tree.UpdateRetainPacket(newPublishPacket("1/2"))
+	tree.UpdateRetainPacket(newPublishPacket("1"))
+
+	tests := []struct {
+		match  string
+		topics []string
+	}{
+		{match: "+/2/3/4/5", topics: []string{"1/2/3/4/5"}},
+		{match: "1/+/+/+/5", topics: []string{"1/2/3/4/5"}},
+		{match: "1/2/+/+/+", topics: []string{"1/2/3/4/5"}},
+		{match: "1/2/3/#/4/5", topics: []string{"1/2/3/4/5"}},
+		{match: "1/2/#/4/5", topics: []string{"1/2/3/4/5"}},
+		{match: "1/2/#/5", topics: []string{"1/2/3/4/5"}},
+		{match: "1/2/#", topics: []string{"1/2/3/4/5", "1/2/3/4", "1/2/3", "1/2"}},
+		{match: "1/2/#/6", topics: nil},
+		{match: "1/2/#/4", topics: []string{"1/2/3/4"}},
+		{match: "#/5", topics: []string{"1/2/3/4/5", "2/3/4/5", "3/4/5", "4/5", "5"}},
+		{match: "#/#/5", topics: []string{"1/2/3/4/5", "2/3/4/5", "3/4/5", "4/5", "5"}},
+		{match: "1/#/1", topics: []string{"1/1/1/1/1"}},
+		{match: "#", topics: []string{"1/1/1/1/1", "1/2/3/4/5", "2/3/4/5", "3/4/5", "4/5", "5", "1/2/3/4", "1/2/3", "1/2", "1"}},
+		{match: "1/#", topics: []string{"1/1/1/1/1", "1/2/3/4/5", "1/2/3/4", "1/2/3", "1/2", "1"}},
+	}
+	for _, it := range tests {
+		var topics []string
+		tree.MatchRetainMessage(it.match, func(packet *packets.PublishPacket) {
+			topics = append(topics, packet.TopicName)
+		})
+		sort.Strings(it.topics)
+		sort.Strings(topics)
+		if reflect.DeepEqual(it.topics, topics) == false {
+			t.Fatalf("match %+v %+v result %+v faild", it.match, it.topics, topics)
+		}
+	}
+}
+
 func TestLog(t *testing.T) {
-	log.SetFormatter(&log.TextFormatter{DisableQuote:true})
+	log.SetFormatter(&log.TextFormatter{DisableQuote: true})
 	log.SetReportCaller(true)
 	log.Error("hello")
 
 	log.WithField("stack", fmt.Sprintf("%+v", errors.WithStack(errors.New("")))).Errorf("hello")
 
-	fmt.Printf("%q",fmt.Sprintf("%+v",errors.New("hello")))
+	fmt.Printf("%q", fmt.Sprintf("%+v", errors.New("hello")))
 }

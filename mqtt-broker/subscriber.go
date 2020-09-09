@@ -32,6 +32,10 @@ type subscriber struct {
 	streamInfo   *proto.StreamInfoItem
 }
 
+func (s *subscriber) BrokerID() int64 {
+	return s.status.brokerId
+}
+
 func (s *subscriber) Online() bool {
 	return s.status.Status() == proto.ClientStatusChangeEvent_Online
 }
@@ -67,6 +71,7 @@ func (s *subscriber) writePacket(packet *packets.PublishPacket, callback func(er
 
 type subscriberStatus struct {
 	sessionID int64
+	brokerId  int64
 	status    *proto.ClientStatusChangeEvent_Status
 }
 

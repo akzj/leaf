@@ -29,6 +29,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -46,6 +47,7 @@ type Broker struct {
 
 	sessionsLocker sync.Mutex
 	sessions       map[string]*session
+	maxClientCount int64
 
 	topicTree unsafe.Pointer
 	metaTree  *btree.BTree
@@ -68,6 +70,17 @@ type Broker struct {
 	listener []net.Listener
 
 	offsetCommitter *offsetCommitter
+
+	messagesReceived int64
+	messagesSent     int64
+
+	loadBytesReceived int64
+	loadBytesSent     int64
+
+	messagesPublishReceived int64
+	messagesPublishSent     int64
+
+	sys *SYS
 }
 
 func New(options Options) *Broker {
@@ -144,7 +157,76 @@ func (broker *Broker) Start() error {
 		return err
 	}
 	go broker.offsetCommitter.commitLoop(broker.ctx, broker.ReadOffsetCommitInterval)
+	broker.sys = newSysPub(broker)
+	go broker.sys.pubLoop(broker.ctx, broker.SysInterval)
 	broker.processEventLoop()
+	return nil
+}
+
+func (broker *Broker) serve(listener net.Listener) {
+	var tempDelay time.Duration
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Temporary() {
+				if tempDelay == 0 {
+					tempDelay = 5 * time.Millisecond
+				} else {
+					tempDelay *= 2
+				}
+				if max := 1 * time.Second; tempDelay > max {
+					tempDelay = max
+				}
+				log.Errorf("http: Accept error: %v; retrying in %v", err, tempDelay)
+				time.Sleep(tempDelay)
+				continue
+			}
+		}
+		go broker.handleConnection(conn)
+	}
+}
+
+func (broker *Broker) webSocketListenLoop() error {
+	if broker.WSPort != 0 {
+		l, err := utils.NewListener(broker.HOST, broker.WSPort, nil)
+		if err != nil {
+			return err
+		}
+		go func() {
+			if err := http.Serve(l, broker); err != nil {
+				log.Fatalf("%+v", err)
+			}
+		}()
+	}
+	if broker.WSSPort != 0 {
+		l, err := utils.NewListener(broker.HOST, broker.WSSPort, broker.WSTLSConfig)
+		if err != nil {
+			return err
+		}
+		go func() {
+			if err := http.Serve(l, broker); err != nil {
+				log.Fatalf("%+v", err)
+			}
+		}()
+	}
+	return nil
+}
+
+func (broker *Broker) clientTCPListenLoop() error {
+	if broker.BindTLSPort != 0 {
+		l, err := utils.NewListener(broker.HOST, broker.BindTLSPort, broker.tlsConfig)
+		if err != nil {
+			return err
+		}
+		go broker.serve(l)
+	}
+	if broker.BindPort != 0 {
+		l, err := utils.NewListener(broker.HOST, broker.BindPort, nil)
+		if err != nil {
+			return err
+		}
+		go broker.serve(l)
+	}
 	return nil
 }
 
@@ -154,29 +236,6 @@ func (broker *Broker) getSubscribeTree() *TopicTree {
 
 func (broker *Broker) setSubscribeTree(tree *TopicTree) {
 	atomic.StorePointer(&broker.topicTree, unsafe.Pointer(tree))
-}
-
-func (broker *Broker) deleteSession(identifier string) error {
-	//1 delete client session from meta-server
-	info, err := broker.client.DeleteMQTTClientSession(context.Background(), identifier)
-	if err != nil {
-		log.Error(err.Error())
-		return err
-	}
-	if info == nil {
-		return nil
-	}
-
-	//2 delete subscribe,and pub `unsubscribe-event` to mqtt-event-queue
-	packet := &packets.UnsubscribePacket{}
-	for topic := range info.Topics {
-		packet.Topics = append(packet.Topics, topic)
-	}
-	if err := broker.handleUnSubscribePacket(info, packet); err != nil {
-		log.Error(err.Error())
-		return err
-	}
-	return nil
 }
 
 func (broker *Broker) handleConnection(conn net.Conn) {
@@ -258,74 +317,101 @@ func (broker *Broker) handleConnection(conn net.Conn) {
 		willMessage.TopicName = connectPacket.WillTopic
 		sess.setWillMessage(willMessage)
 	}
+
+	broker.sessionsLocker.Lock()
+	broker.sessions[sess.MQTTSessionInfo.ClientIdentifier] = sess
+	count := len(broker.sessions)
+	broker.sessionsLocker.Unlock()
+
+	if int64(count) > atomic.LoadInt64(&broker.maxClientCount) {
+		atomic.StoreInt64(&broker.maxClientCount, int64(count))
+	}
+	defer func() {
+		broker.sessionsLocker.Lock()
+		delete(broker.sessions, sess.MQTTSessionInfo.ClientIdentifier)
+		broker.sessionsLocker.Unlock()
+	}()
 	sess.readConnLoop()
 }
 
-func (broker *Broker) serve(listener net.Listener) {
-	var tempDelay time.Duration
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Temporary() {
-				if tempDelay == 0 {
-					tempDelay = 5 * time.Millisecond
-				} else {
-					tempDelay *= 2
-				}
-				if max := 1 * time.Second; tempDelay > max {
-					tempDelay = max
-				}
-				log.Errorf("http: Accept error: %v; retrying in %v", err, tempDelay)
-				time.Sleep(tempDelay)
-				continue
-			}
-		}
-		go broker.handleConnection(conn)
+func (broker *Broker) deleteSession(identifier string) error {
+	//1 delete client session from meta-server
+	info, err := broker.client.DeleteMQTTClientSession(context.Background(), identifier)
+	if err != nil {
+		log.Error(err.Error())
+		return err
 	}
-}
+	if info == nil {
+		return nil
+	}
 
-func (broker *Broker) webSocketListenLoop() error {
-	if broker.WSPort != 0 {
-		l, err := utils.NewListener(broker.HOST, broker.WSPort, nil)
-		if err != nil {
-			return err
-		}
-		go func() {
-			if err := http.Serve(l, broker); err != nil {
-				log.Fatalf("%+v", err)
-			}
-		}()
+	//2 delete subscribe,and pub `unsubscribe-event` to mqtt-event-queue
+	packet := &packets.UnsubscribePacket{}
+	for topic := range info.Topics {
+		packet.Topics = append(packet.Topics, topic)
 	}
-	if broker.WSSPort != 0 {
-		l, err := utils.NewListener(broker.HOST, broker.WSSPort, broker.WSTLSConfig)
-		if err != nil {
-			return err
-		}
-		go func() {
-			if err := http.Serve(l, broker); err != nil {
-				log.Fatalf("%+v", err)
-			}
-		}()
+	if err := broker.handleUnSubscribePacket(info, packet); err != nil {
+		log.Error(err.Error())
+		return err
 	}
 	return nil
 }
 
-func (broker *Broker) clientTCPListenLoop() error {
-	if broker.BindTLSPort != 0 {
-		l, err := utils.NewListener(broker.HOST, broker.BindTLSPort, broker.tlsConfig)
-		if err != nil {
-			return err
+func (broker *Broker) getClientCount() int64 {
+	broker.sessionsLocker.Lock()
+	count := len(broker.sessions)
+	broker.sessionsLocker.Unlock()
+	return int64(count)
+}
+
+func (broker *Broker) getClientsMaximum() int64 {
+	return atomic.LoadInt64(&broker.maxClientCount)
+}
+
+func (broker *Broker) getMessagesRetainedCount() int64 {
+	var count int64
+	broker.getSubscribeTree().RangeRetainMessage(func(packet *packets.PublishPacket) bool {
+		count++
+		return true
+	})
+	return count
+}
+
+func (broker *Broker) getClientsDisconnected() int64 {
+	min := &subscriberStatus{sessionID: 0}
+	max := &subscriberStatus{sessionID: math.MaxInt64}
+	var count int64
+	broker.metaTree.DescendRange(min, max, func(item btree.Item) bool {
+		status := item.(*subscriberStatus)
+		if status.brokerId == broker.BrokerId &&
+			status.Status() == proto.ClientStatusChangeEvent_Offline {
+			count++
 		}
-		go broker.serve(l)
-	}
-	if broker.BindPort != 0 {
-		l, err := utils.NewListener(broker.HOST, broker.BindPort, nil)
-		if err != nil {
-			return err
+		return true
+	})
+	return count
+}
+
+func (broker *Broker) getMessagesPublishSent() int64 {
+	return atomic.LoadInt64(&broker.messagesPublishSent)
+}
+
+func (broker *Broker) getClientsTotal() int64 {
+	min := &subscriberStatus{sessionID: 0}
+	max := &subscriberStatus{sessionID: math.MaxInt64}
+	var count int64
+	broker.metaTree.DescendRange(min, max, func(item btree.Item) bool {
+		status := item.(*subscriberStatus)
+		if status.brokerId == broker.BrokerId {
+			count++
 		}
-		go broker.serve(l)
-	}
-	return nil
+		return true
+	})
+	return count
+}
+
+func (broker *Broker) getMessagesReceived() int64 {
+	return atomic.LoadInt64(&broker.messagesReceived)
 }
 
 func (broker *Broker) checkConnectAuth(clientIdentifier string, username string, password string) (bool, error) {
@@ -374,6 +460,35 @@ func (broker *Broker) handleSubscribeEvent(event *proto.SubscribeEvent) {
 	broker.setSubscribeTree(tree)
 }
 
+func (broker *Broker) getLoadBytesSent() int64 {
+	return atomic.LoadInt64(&broker.loadBytesSent)
+}
+
+func (broker *Broker) getLoadBytesReceived() int64 {
+	return atomic.LoadInt64(&broker.loadBytesReceived)
+}
+
+func (broker *Broker) getMessagesSent() int64 {
+	return atomic.LoadInt64(&broker.messagesSent)
+}
+
+func (broker *Broker) SubscriptionsCount() int64 {
+	var count int64
+	broker.getSubscribeTree().Walk(func(path string, subscribers map[int64]Subscriber) bool {
+		for _, sub := range subscribers {
+			if sub.BrokerID() == broker.BrokerId {
+				count++
+			}
+		}
+		return true
+	})
+	return count
+}
+
+func (broker *Broker) getMessagesPublishReceived() int64 {
+	return atomic.LoadInt64(&broker.messagesPublishReceived)
+}
+
 func (broker *Broker) insertSubscriber2Tree(tree *TopicTree, event *proto.SubscribeEvent) {
 	subs, err := broker.newSubscriber(event)
 	if err != nil {
@@ -382,6 +497,19 @@ func (broker *Broker) insertSubscriber2Tree(tree *TopicTree, event *proto.Subscr
 	}
 	for _, sub := range subs {
 		tree.Insert(sub)
+	}
+	//publish retain packets to new subscriber
+	for topic, qos := range event.Topic {
+		broker.getSubscribeTree().MatchRetainMessage(topic, func(packet *packets.PublishPacket) {
+			for _, it := range subs {
+				if it.Qos() == minQos(int32(packet.Qos), qos) {
+					it.writePacket(packet, func(err error) {
+						log.Error(err)
+					})
+					break
+				}
+			}
+		})
 	}
 }
 
@@ -432,7 +560,8 @@ func (broker *Broker) processEventLoop() {
 			broker.eventOffset = event.offset
 			atomic.AddInt64(&broker.treeChanges, 1)
 		}
-		if changes := atomic.LoadInt64(&broker.treeChanges); changes > broker.CheckpointEventSize {
+		if changes := atomic.LoadInt64(&broker.treeChanges);
+			changes > broker.CheckpointEventSize {
 			if atomic.CompareAndSwapInt32(&broker.isCheckpoint, 0, 1) == false {
 				continue
 			}
@@ -501,6 +630,31 @@ func (broker *Broker) sendEvent(message pproto.Message) error {
 	return nil
 }
 
+func (broker *Broker) handlePublishPacket(packet *packets.PublishPacket) error {
+	detail := packet.Details()
+	var errPointer unsafe.Pointer
+	var wg sync.WaitGroup
+	tree := broker.getSubscribeTree()
+	for _, subMaps := range tree.MatchSubscribers(packet.TopicName) {
+		for _, sub := range subMaps {
+			wg.Add(1)
+			packet.Qos = byte(minQos(int32(detail.Qos), sub.Qos()))
+			sub.writePacket(packet, func(err error) {
+				if err != nil {
+					log.Warn(err)
+					atomic.StorePointer(&errPointer, unsafe.Pointer(&err))
+				}
+				wg.Done()
+			})
+		}
+	}
+	wg.Wait()
+	if eObj := atomic.LoadPointer(&errPointer); eObj != nil {
+		return errors.WithStack(*(*error)(eObj))
+	}
+	return nil
+}
+
 func (broker *Broker) handleSubscribePacket(sessionItem *proto.MQTTSessionItem,
 	packet *packets.SubscribePacket) error {
 	event := proto.SubscribeEvent{
@@ -544,6 +698,7 @@ func (broker *Broker) handleClientStatusChange(sessionID int64, offline proto.Cl
 	event := &proto.ClientStatusChangeEvent{
 		SessionID: sessionID,
 		Status:    offline,
+		BrokerId:  broker.BrokerId,
 	}
 	return broker.sendEvent(event)
 }
@@ -559,6 +714,7 @@ func (broker *Broker) handleClientStatusChangeEvent(event *proto.ClientStatusCha
 		metaTree := broker.metaTree.Clone()
 		metaTree.ReplaceOrInsert(&subscriberStatus{
 			sessionID: event.SessionID,
+			brokerId:  event.BrokerId,
 			status:    &event.Status,
 		})
 		broker.metaTree = metaTree

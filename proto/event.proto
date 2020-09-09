@@ -50,4 +50,5 @@ message ClientStatusChangeEvent{
   };
   int64 sessionID = 1;
   Status status = 2;
+  int64 broker_id = 3;
 }
