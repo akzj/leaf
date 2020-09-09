@@ -24,6 +24,7 @@ import (
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -266,6 +267,10 @@ func (sess *session) handlePublishPacketQos2(packet *packets.PublishPacket) erro
 
 func (sess *session) handlePublishPacket(packet *packets.PublishPacket) error {
 	log.WithField("packet", packet).Debug("handlePublishPacket")
+
+	if strings.HasPrefix(packet.TopicName, "$SYS") {
+		return fmt.Errorf("$SYS/# topic readOnly")
+	}
 	atomic.AddInt64(&sess.broker.messagesPublishReceived, 1)
 	if packet.Retain {
 		if err := sess.broker.handleRetainPacket(packet); err != nil {
