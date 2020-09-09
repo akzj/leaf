@@ -251,22 +251,16 @@ func mqttSub(brokerAddr string, topic string, clientID string) error {
 	opts.SetPingTimeout(1 * time.Second)
 	opts.SetCleanSession(false)
 	opts.SetDefaultPublishHandler(func(c mqtt.Client, message mqtt.Message) {
-		fmt.Println(string(message.Payload()))
+		fmt.Println(message.Topic(), string(message.Payload()))
 	})
 
 	c := mqtt.NewClient(opts)
 	if token := c.Connect(); token.Wait() && token.Error() != nil {
 		panic(token.Error())
 	}
-
-	for {
-		if token := c.Subscribe(topic, 0, nil); token.Wait() && token.Error() != nil {
-			fmt.Println(token.Error())
-			os.Exit(1)
-		}
-		time.Sleep(time.Second * 3)
-		c.Unsubscribe(topic).Wait()
-		time.Sleep(time.Second * 3)
+	if token := c.Subscribe(topic, 0, nil); token.Wait() && token.Error() != nil {
+		fmt.Println(token.Error())
+		os.Exit(1)
 	}
 
 	select {}
@@ -278,6 +272,7 @@ func mqttPub(brokerAddr string, topic string, clientID string, count int) error 
 	opts := mqtt.NewClientOptions().AddBroker(brokerAddr).SetClientID(clientID)
 	opts.SetKeepAlive(2 * time.Second)
 	opts.SetPingTimeout(1 * time.Second)
+	opts.SetCleanSession(false)
 
 	c := mqtt.NewClient(opts)
 	if token := c.Connect(); token.Wait() && token.Error() != nil {
@@ -288,12 +283,11 @@ func mqttPub(brokerAddr string, topic string, clientID string, count int) error 
 
 	for i := 0; i < count; i++ {
 		text := fmt.Sprintf("this is msg #%d!", i)
-		token := c.Publish(topic, 0, false, text)
+		token := c.Publish(topic, 0, true, text)
 		token.Wait()
 		if token.Error() != nil {
 			return token.Error()
 		}
-		time.Sleep(time.Millisecond *100)
 	}
 	c.Disconnect(250)
 	return nil
