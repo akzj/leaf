@@ -56,7 +56,6 @@ func reload(sStore *SStore) error {
 	committer := newCommitter(sStore.options,
 		sStore.endWatchers,
 		sStore.indexTable,
-		sStore.segments,
 		sStore.endMap,
 		mStreamTable,
 		commitQueue,
@@ -76,17 +75,14 @@ func reload(sStore *SStore) error {
 			return err
 		}
 		for _, info := range segment.meta.OffSetInfos {
-			sStore.endMap.set(info.StreamID, info.End, segment.meta.Ver)
+			sStore.endMap.set(info.StreamID, info.End, segment.meta.VerFrom)
 		}
 		if segment.meta.LastEntryID <= sStore.entryID {
 			return errors.Errorf("segment meta LastEntryID[%d] error",
 				segment.meta.LastEntryID)
 		}
 		sStore.entryID = segment.meta.LastEntryID
-		sStore.segments[file] = segment
-		if err := sStore.indexTable.update1(segment); err != nil {
-			return err
-		}
+		sStore.committer.appendSegment(file, segment)
 	}
 
 	//replay entries in the journal

@@ -16,6 +16,7 @@ package sstore
 import (
 	"github.com/pkg/errors"
 	"io"
+	"os"
 	"sync"
 	"sync/atomic"
 )
@@ -26,7 +27,6 @@ type SStore struct {
 
 	entryID     int64
 	notifyPool  sync.Pool
-	segments    map[string]*segment
 	endMap      *int64LockMap
 	committer   *committer
 	indexTable  *indexTable
@@ -50,7 +50,6 @@ func Open(options Options) (*SStore, error) {
 				return make(chan interface{}, 1)
 			},
 		},
-		segments:    make(map[string]*segment),
 		endMap:      newInt64LockMap(),
 		indexTable:  newIndexTable(),
 		endWatchers: newEndWatchers(),
@@ -158,4 +157,44 @@ func (sstore *SStore) GetSnapshot() Snapshot {
 		EndMap:  int64Map,
 		Version: version,
 	}
+}
+
+func (sstore *SStore) OpenSegment(name string) (*Segment, error) {
+	segment := sstore.committer.getSegment(name)
+	if segment == nil {
+		return nil, ErrNoFindSegment
+	}
+	f, err := os.Open(segment.filename)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	return &Segment{
+		f: f,
+		release: func() {
+			segment.refDec()
+		},
+	}, nil
+}
+
+func (sstore *SStore) Sync(index int64) {
+	sstore.committer.getSegment2(index)
+}
+
+type Segment struct {
+	f       *os.File
+	release func()
+}
+
+func (s *Segment) Read(p []byte) (n int, err error) {
+	return s.f.Read(p)
+}
+
+func (s *Segment) Seek(offset int64, whence int) (int64, error) {
+	return s.f.Seek(offset, whence)
+}
+
+func (s *Segment) Close() error {
+	err := s.Close()
+	s.release()
+	return err
 }

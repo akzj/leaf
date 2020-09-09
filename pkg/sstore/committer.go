@@ -16,6 +16,7 @@ package sstore
 import (
 	"log"
 	"path/filepath"
+	"sort"
 	"sync"
 )
 
@@ -48,7 +49,6 @@ type committer struct {
 func newCommitter(options Options,
 	endWatchers *endWatchers,
 	indexTable *indexTable,
-	segments map[string]*segment,
 	sizeMap *int64LockMap,
 	mutableMStreamMap *mStreamTable,
 	queue *entryQueue,
@@ -67,7 +67,7 @@ func newCommitter(options Options,
 		immutableMStreamMaps:          make([]*mStreamTable, 0, 32),
 		locker:                        new(sync.RWMutex),
 		flusher:                       newFlusher(files),
-		segments:                      segments,
+		segments:                      map[string]*segment{},
 		segmentsLocker:                new(sync.RWMutex),
 		indexTable:                    indexTable,
 		endWatchers:                   endWatchers,
@@ -87,10 +87,38 @@ func (c *committer) appendSegment(filename string, segment *segment) {
 	}
 }
 
+func (c *committer) getSegment2(index int64) *segment {
+	c.segmentsLocker.Lock()
+	defer c.segmentsLocker.Unlock()
+	var segments []*segment
+	for _, segment := range c.segments {
+		segments = append(segments, segment)
+	}
+	if len(segments) == 0 {
+		return nil
+	}
+	sort.Slice(segments, func(i, j int) bool {
+		if len(segments[i].filename) != len(segments[i].filename) {
+			return len(segments[i].filename) < len(segments[i].filename)
+		}
+		return segments[i].filename < segments[i].filename
+	})
+	if index > segments[len(segments)-1].meta.VerTo.Index {
+		return nil
+	}
+	i := sort.Search(len(segments), func(i int) bool {
+		return index < segments[i].meta.VerFrom.Index
+	})
+	return segments[i-1]
+}
+
 func (c *committer) getSegment(filename string) *segment {
 	c.segmentsLocker.Lock()
 	defer c.segmentsLocker.Unlock()
-	segment, _ := c.segments[filename]
+	segment, ok := c.segments[filename]
+	if ok {
+		segment.refInc()
+	}
 	return segment
 }
 

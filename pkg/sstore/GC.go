@@ -34,6 +34,7 @@ func (sstore *SStore) gcWal() error {
 		return errors.Errorf("no find segment [%s]", last)
 	}
 	LastEntryID := segment.lastEntryID()
+	segment.refDec()
 	skip := sstore.wWriter.walFilename()
 	for _, filename := range walFiles {
 		if filename == skip {
@@ -77,6 +78,7 @@ func (sstore *SStore) gcSegment() error {
 		if err := sstore.files.deleteSegment(deleteSegment{Filename: filename}); err != nil {
 			return err
 		}
+		segment.refDec()
 	}
 	return nil
 }

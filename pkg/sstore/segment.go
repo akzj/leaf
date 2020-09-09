@@ -37,9 +37,10 @@ type offsetInfo struct {
 }
 
 type segmentMeta struct {
-	Ver         Version               `json:"ver"`
-	GcTS        time.Time             `json:"gc_ts"`
-	LastEntryID int64                 `json:"last_entry_id"`
+	VerFrom     Version              `json:"ver_from"`
+	VerTo       Version              `json:"ver_to"`
+	GcTS        time.Time            `json:"gc_ts"`
+	LastEntryID int64                `json:"last_entry_id"`
 	OffSetInfos map[int64]offsetInfo `json:"offset_infos"`
 }
 
