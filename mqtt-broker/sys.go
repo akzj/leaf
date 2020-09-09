@@ -80,7 +80,7 @@ func newSysPub(broker *Broker) *SYS {
 
 func (sys *SYS) pubLoop(ctx context.Context, interval time.Duration) {
 	if interval == 0 {
-		return
+		interval = time.Minute * 5
 	}
 	ticker := time.NewTicker(interval)
 	for {
@@ -88,6 +88,7 @@ func (sys *SYS) pubLoop(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 		case <-ticker.C:
 		}
+		log.Info("publish $SYS topic")
 		sys.pubSys()
 	}
 }

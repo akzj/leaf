@@ -157,11 +157,9 @@ func (broker *Broker) Start() error {
 		return err
 	}
 	go broker.offsetCommitter.commitLoop(broker.ctx, broker.ReadOffsetCommitInterval)
+	broker.sys = newSysPub(broker)
+	go broker.sys.pubLoop(broker.ctx, broker.SysInterval)
 	broker.processEventLoop()
-	if broker.SysInterval != 0 {
-		broker.sys = newSysPub(broker)
-		broker.sys.pubLoop(broker.ctx, broker.SysInterval)
-	}
 	return nil
 }
 
