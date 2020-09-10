@@ -113,8 +113,8 @@ func openSegment(filename string) (*segment, error) {
 	f = nil
 	return segment, nil
 }
-func (s *segment) toVersion() *pb.Version {
-	return s.meta.To
+func (s *segment) FromVersion() *pb.Version {
+	return s.meta.From
 }
 func (s *segment) offsetInfo(streamID int64) (*pb.OffsetInfo, error) {
 	indexInfo, ok := s.meta.OffSetInfos[streamID]

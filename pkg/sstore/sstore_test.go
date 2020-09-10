@@ -249,9 +249,9 @@ func TestSStore_Watcher(t *testing.T) {
 }
 
 func TestSStore_AppendMultiStream(t *testing.T) {
-	os.RemoveAll("data")
-	defer os.RemoveAll("data")
-	sstore, err := Open(DefaultOptions("data").WithMaxMStreamTableSize(4 * MB))
+	//os.RemoveAll("data")
+	//defer os.RemoveAll("data")
+	sstore, err := Open(DefaultOptions("data").WithMaxMStreamTableSize(16 * MB).WithMaxWalSize(15*MB))
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -323,3 +323,6 @@ func TestSStore_GC(t *testing.T) {
 		t.Fatalf("")
 	}
 }
+
+
+

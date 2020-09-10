@@ -14,11 +14,15 @@
 package sstore
 
 import (
+	"context"
 	"github.com/akzj/streamIO/pkg/block-queue"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/pkg/errors"
 	"io"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -36,6 +40,7 @@ type SStore struct {
 	wWriter     *wWriter
 	manifest    *manifest
 	isClose     int32
+	syncer      *Syncer
 }
 
 type Snapshot struct {
@@ -47,20 +52,22 @@ func Open(options Options) (*SStore, error) {
 	var sstore = &SStore{
 		options:    options,
 		entryQueue: block_queue.NewQueue(options.RequestQueueCap),
+		version:    nil,
 		notifyPool: sync.Pool{
 			New: func() interface{} {
 				return make(chan interface{}, 1)
 			},
 		},
 		endMap:      newInt64LockMap(),
+		committer:   nil,
 		indexTable:  newIndexTable(),
 		endWatchers: newEndWatchers(),
 		wWriter:     nil,
 		manifest:    nil,
 		isClose:     0,
+		syncer:      nil,
 	}
-
-	if err := reload(sstore); err != nil {
+	if err := sstore.init(); err != nil {
 		return nil, err
 	}
 	return sstore, nil
@@ -144,10 +151,7 @@ func (sstore *SStore) Exist(streamID int64) bool {
 
 //GC will delete useless journal manifest,segments
 func (sstore *SStore) GC() error {
-	if err := sstore.gcWal(); err != nil {
-		return err
-	}
-	if err := sstore.gcSegment(); err != nil {
+	if err := sstore.clearSegment(); err != nil {
 		return err
 	}
 	return nil
@@ -161,6 +165,7 @@ func (sstore *SStore) Close() error {
 	sstore.wWriter.close()
 	sstore.manifest.close()
 	sstore.endWatchers.close()
+	sstore.syncer.Close()
 	return nil
 }
 
@@ -172,45 +177,40 @@ func (sstore *SStore) GetSnapshot() Snapshot {
 	}
 }
 
-func (sstore *SStore) OpenSegment(name string) (*Segment, error) {
-	segment := sstore.committer.getSegment(name)
+func (sstore *SStore) Sync(ctx context.Context, ServerID int64, index int64, f func(SyncCallback)) {
+	sstore.syncer.SyncRequest(ctx, ServerID, index, f)
+}
+
+func (sstore *SStore) OpenSegmentReader(filename string) (*SegmentReader, error) {
+	segment := sstore.committer.getSegment(filename)
 	if segment == nil {
 		return nil, ErrNoFindSegment
 	}
-	f, err := os.Open(segment.filename)
+	return sstore.syncer.OpenSegmentReader(segment)
+}
+
+func (sstore *SStore) CreateSegment(filename string) (*SegmentWriter, error) {
+	segmentIndex, err := strconv.ParseInt(strings.Split(filename, ".")[0], 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	if err := sstore.manifest.setSegmentIndex(segmentIndex); err != nil {
+		return nil, err
+	}
+	filename = filepath.Join(sstore.options.JournalDir, filename)
+	f, err := os.Create(filename)
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}
-	return &Segment{
+	writer := &SegmentWriter{
 		f: f,
-		release: func() {
-			segment.refDec()
+		discard: func() error {
+			_ = f.Close()
+			return os.Remove(filename)
 		},
-	}, nil
-}
-
-func (sstore *SStore) Sync(index int64) {
-	segment := sstore.committer.getSegment2(index)
-	if segment == nil {
-		//todo sync from journal
+		commit: func() error {
+			return sstore.committer.AppendSegmentFile(filename)
+		},
 	}
-}
-
-type Segment struct {
-	f       *os.File
-	release func()
-}
-
-func (s *Segment) Read(p []byte) (n int, err error) {
-	return s.f.Read(p)
-}
-
-func (s *Segment) Seek(offset int64, whence int) (int64, error) {
-	return s.f.Seek(offset, whence)
-}
-
-func (s *Segment) Close() error {
-	err := s.Close()
-	s.release()
-	return err
+	return writer, nil
 }

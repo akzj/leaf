@@ -42,11 +42,11 @@ message JournalMeta {
 }
 
 
-message AppendWal {
+message AppendJournal {
   string  Filename = 1;
 }
 
-message DeleteWal {
+message DeleteJournal {
   string  Filename = 1;
 }
 
@@ -58,13 +58,13 @@ message DeleteSegment  {
   string  Filename = 1;
 }
 
-message DelWalHeader  {
+message DelJournalHeader  {
   string  Filename = 1;
 }
 
 message FileIndex {
   int64  segment_index = 5;
-  int64  wal_index = 6;
+  int64  journal_index = 6;
   int64  manifest_index = 7;
 }
 message ManifestSnapshot{
@@ -72,5 +72,5 @@ message ManifestSnapshot{
   Version      version = 1;
   repeated string segments = 2;
   repeated  string journals = 3;
-  map<string, JournalMeta> wal_headers = 4;
+  map<string, JournalMeta> journal_headers = 4;
 }

@@ -31,6 +31,7 @@ func (worker *cbWorker) start() {
 			items := worker.queue.PopAll(nil)
 			for index := range items {
 				item := items[index]
+				items[index] = nil
 				switch request := item.(type) {
 				case *writeRequest:
 					request.cb(request.end, request.err)

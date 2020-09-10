@@ -16,6 +16,7 @@ package sstore
 import (
 	block_queue "github.com/akzj/streamIO/pkg/block-queue"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
+	"github.com/pkg/errors"
 	"log"
 	"path/filepath"
 	"sort"
@@ -40,12 +41,13 @@ type committer struct {
 
 	indexTable  *indexTable
 	endWatchers *endWatchers
-	files       *manifest
+	manifest    *manifest
 
 	blockSize int
 
-	cbWorker      *cbWorker
-	callbackQueue *block_queue.Queue
+	cbWorker             *cbWorker
+	callbackQueue        *block_queue.Queue
+	flushSegmentCallback func(filename string)
 }
 
 func newCommitter(options Options,
@@ -54,28 +56,30 @@ func newCommitter(options Options,
 	sizeMap *int64LockMap,
 	mutableMStreamMap *mStreamTable,
 	queue *block_queue.Queue,
-	files *manifest,
-	blockSize int) *committer {
+	manifest *manifest,
+	blockSize int,
+	flushSegmentCallback func(filename string)) *committer {
 
 	cbQueue := block_queue.NewQueue(128)
 
 	return &committer{
-		files:                         files,
 		queue:                         queue,
-		blockSize:                     blockSize,
 		maxMStreamTableSize:           options.MaxMStreamTableSize,
 		mutableMStreamMap:             mutableMStreamMap,
 		sizeMap:                       sizeMap,
 		immutableMStreamMaps:          make([]*mStreamTable, 0, 32),
+		maxImmutableMStreamTableCount: options.MaxImmutableMStreamTableCount,
 		locker:                        new(sync.RWMutex),
-		flusher:                       newFlusher(files),
+		flusher:                       newFlusher(manifest),
 		segments:                      map[string]*segment{},
 		segmentsLocker:                new(sync.RWMutex),
 		indexTable:                    indexTable,
 		endWatchers:                   endWatchers,
-		maxImmutableMStreamTableCount: options.MaxImmutableMStreamTableCount,
+		manifest:                      manifest,
+		blockSize:                     blockSize,
 		cbWorker:                      newCbWorker(cbQueue),
 		callbackQueue:                 cbQueue,
+		flushSegmentCallback:          flushSegmentCallback,
 	}
 }
 
@@ -105,19 +109,21 @@ func (c *committer) getSegment2(index int64) *segment {
 		}
 		return segments[i].filename < segments[i].filename
 	})
-	if index > segments[len(segments)-1].meta.To.Index {
-		return nil
-	}
 	i := sort.Search(len(segments), func(i int) bool {
-		return index < segments[i].meta.From.Index
+		return index <= segments[i].meta.From.Index
 	})
-	return segments[i-1]
+	if i < len(segments) && segments[i].meta.From.Index == index {
+		segment := segments[i]
+		segment.refInc()
+		return segment
+	}
+	return nil
 }
 
 func (c *committer) getSegment(filename string) *segment {
 	c.segmentsLocker.Lock()
 	defer c.segmentsLocker.Unlock()
-	segment, ok := c.segments[filename]
+	segment, ok := c.segments[filepath.Base(filename)]
 	if ok {
 		segment.refInc()
 	}
@@ -139,10 +145,27 @@ func (c *committer) deleteSegment(filename string) error {
 	return nil
 }
 
-func (c *committer) flushCallback(filename string, _ *mStreamTable) {
+func (c *committer) AppendSegmentFile(filename string) error {
+	if err := c.flushCallback(filename); err != nil {
+		return err
+	}
+	segment := c.getSegment(filename)
+	if segment == nil {
+		return errors.Errorf("no find segment %s", filename)
+	}
+	for streamID, info := range segment.meta.OffSetInfos {
+		item := notifyPool.Get().(*notify)
+		item.streamID = streamID
+		item.end = info.End
+		c.endWatchers.notify(item)
+	}
+	return nil
+}
+
+func (c *committer) flushCallback(filename string) error {
 	segment, err := openSegment(filename)
 	if err != nil {
-		log.Fatal(err.Error())
+		return errors.WithStack(err)
 	}
 	var remove *mStreamTable
 	c.locker.Lock()
@@ -161,9 +184,11 @@ func (c *committer) flushCallback(filename string, _ *mStreamTable) {
 			c.indexTable.remove(mStream)
 		}
 	}
-	if err := c.files.appendSegment(&pb.AppendSegment{Filename: filename}); err != nil {
-		log.Fatal(err.Error())
+	if err := c.manifest.appendSegment(&pb.AppendSegment{Filename: filename}); err != nil {
+		return err
 	}
+	c.flushSegmentCallback(filename)
+	return err
 }
 
 func (c *committer) flush() {
@@ -177,7 +202,7 @@ func (c *committer) flush() {
 		if err != nil {
 			log.Fatal(err.Error())
 		}
-		c.flushCallback(filename, mStreamMap)
+		c.flushCallback(filename)
 	})
 }
 

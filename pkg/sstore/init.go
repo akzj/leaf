@@ -15,7 +15,7 @@ package sstore
 
 import (
 	"fmt"
-	block_queue "github.com/akzj/streamIO/pkg/block-queue"
+	"github.com/akzj/streamIO/pkg/block-queue"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/pkg/errors"
 	"os"
@@ -35,10 +35,10 @@ func mkdir(dir string) error {
 	return nil
 }
 
-//reload segment,journal,index
-func reload(sStore *SStore) error {
+//init segment,journal,index
+func (sStore *SStore) init() error {
 	for _, dir := range []string{
-		sStore.options.WalDir,
+		sStore.options.JournalDir,
 		sStore.options.ManifestDir,
 		sStore.options.SegmentDir} {
 		if err := mkdir(dir); err != nil {
@@ -47,7 +47,7 @@ func reload(sStore *SStore) error {
 	}
 	manifest, err := openManifest(sStore.options.ManifestDir,
 		sStore.options.SegmentDir,
-		sStore.options.WalDir)
+		sStore.options.JournalDir)
 	if err != nil {
 		return err
 	}
@@ -62,12 +62,18 @@ func reload(sStore *SStore) error {
 		mStreamTable,
 		commitQueue,
 		manifest,
-		sStore.options.BlockSize)
+		sStore.options.BlockSize, func(filename string) {
+			if err := sStore.clearJournal(); err != nil {
+
+			}
+		})
 	sStore.committer = committer
+	sStore.syncer = newSyncer(sStore)
 
 	sStore.committer.start()
 	sStore.manifest.start()
 	sStore.endWatchers.start()
+	sStore.syncer.start()
 
 	//rebuild segment index
 	segmentFiles := manifest.getSegmentFiles()
@@ -95,16 +101,16 @@ func reload(sStore *SStore) error {
 	}
 
 	//replay entries in the journal
-	walFiles := manifest.getWalFiles()
+	journalFiles := manifest.getJournalFiles()
 	var cb = func(int64, error) {}
-	for _, filename := range walFiles {
-		journal, err := openJournal(filepath.Join(sStore.options.WalDir, filename))
+	for _, filename := range journalFiles {
+		journal, err := openJournal(filepath.Join(sStore.options.JournalDir, filename))
 		if err != nil {
 			return err
 		}
 		//skip
-		if walHeader, err := manifest.getWalHeader(filename); err == nil {
-			if walHeader.Old && walHeader.To.Index <= sStore.version.Index {
+		if header, err := manifest.getJournalHeader(filename); err == nil {
+			if header.Old && header.To.Index <= sStore.version.Index {
 				continue
 			}
 		}
@@ -116,7 +122,7 @@ func reload(sStore *SStore) error {
 				sStore.version = e.entry.Ver
 				committer.queue.Push(e)
 			} else {
-				return errors.WithMessage(ErrWal,
+				return errors.WithMessage(ErrJournal,
 					fmt.Sprintf("e.ID[%d] sStore.index+1[%d] %s",
 						e.entry.Ver.Index, sStore.version.Index+1, filename))
 			}
@@ -131,40 +137,61 @@ func reload(sStore *SStore) error {
 	}
 
 	//create journal writer
-	var w *journal
-	if len(walFiles) > 0 {
-		w, err = openJournal(filepath.Join(sStore.options.WalDir, walFiles[len(walFiles)-1]))
+	var journal *journal
+	if len(journalFiles) > 0 {
+		journal, err = openJournal(filepath.Join(sStore.options.JournalDir, journalFiles[len(journalFiles)-1]))
 		if err != nil {
 			return err
 		}
-		if err := w.SeekEnd(); err != nil {
-			return errors.WithStack(err)
+		if err := journal.RebuildIndex(); err != nil {
+			return err
 		}
 	} else {
-		file, err := manifest.getNextWal()
+		file, err := manifest.geNextJournal()
 		if err != nil {
 			panic(err)
 		}
-		w, err = openJournal(file)
+		journal, err = openJournal(file)
 		if err != nil {
 			return err
 		}
-		if err := manifest.appendWal(&pb.AppendWal{Filename: file}); err != nil {
+		if err := manifest.AppendJournal(&pb.AppendJournal{Filename: file}); err != nil {
 			return err
 		}
 	}
-	sStore.wWriter = newWWriter(w, sStore.entryQueue,
-		sStore.committer.queue, sStore.manifest, sStore.options.MaxWalSize)
+
+	sStore.syncer.appendJournal(journal)
+
+	//rebuild journal index
+	for _, filename := range manifest.getJournalFiles() {
+		journalFile := filepath.Join(sStore.options.JournalDir, filename)
+		if journalFile == journal.filename {
+			continue
+		}
+
+		if journal, err := openJournal(journalFile); err != nil {
+			return err
+		} else {
+			if err := journal.RebuildIndex(); err != nil {
+				return err
+			}
+			_ = journal.Close()
+			sStore.syncer.appendJournal(journal)
+		}
+	}
+
+	sStore.wWriter = newWWriter(journal, sStore.entryQueue,
+		sStore.committer.queue, sStore.syncer, sStore.manifest, sStore.options.MaxJournalSize)
 	sStore.wWriter.start()
 
 	//clear dead journal
-	walFiles = manifest.getWalFiles()
-	walFileAll, err := listDir(sStore.options.WalDir, manifestExt)
+	journalFiles = manifest.getJournalFiles()
+	allJournalFiles, err := listDir(sStore.options.JournalDir, manifestExt)
 	if err != nil {
 		return err
 	}
-	for _, filename := range diffStrings(walFileAll, walFiles) {
-		if err := os.Remove(filepath.Join(sStore.options.WalDir, filename)); err != nil {
+	for _, filename := range diffStrings(allJournalFiles, journalFiles) {
+		if err := os.Remove(filepath.Join(sStore.options.JournalDir, filename)); err != nil {
 			return errors.WithStack(err)
 		}
 		fmt.Println("delete filename " + filename)

@@ -26,15 +26,18 @@ const version1 = "ver1"
 
 // write ahead log
 type journal struct {
-	filename string
-	size     int64
-	f        *os.File
-	writer   *bufio.Writer
-	meta     *pb.JournalMeta
+	filename     string
+	size         int64
+	f            *os.File
+	writer       *bufio.Writer
+	meta         *pb.JournalMeta
+	index        *journalIndex
+	offsetReader *offsetReader
+	*ref
 }
 
 func openJournal(filename string) (*journal, error) {
-	f, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_CREATE, 0666)
+	f, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}
@@ -51,6 +54,9 @@ func openJournal(filename string) (*journal, error) {
 			Filename: filepath.Base(filename),
 			Version:  version1,
 		},
+		index: new(journalIndex),
+		ref: newRef(1, func() {
+		}),
 	}
 	return w, nil
 }
@@ -92,11 +98,16 @@ func (j *journal) Write(e *writeRequest) error {
 	if j.meta.From == nil {
 		j.meta.From = e.entry.Ver
 	}
+	var offset = j.size
 	if n, err := e.WriteTo(j.writer); err != nil {
 		return err
 	} else {
 		j.size += n
 	}
+	j.index.append(jIndex{
+		Offset: offset,
+		Index:  e.entry.Ver.Index,
+	})
 	return nil
 }
 
@@ -119,17 +130,47 @@ func (j *journal) Filename() string {
 }
 
 func (j *journal) Read(cb func(e *writeRequest) error) error {
-	reader := bufio.NewReader(j.f)
+	j.offsetReader = &offsetReader{
+		reader: bufio.NewReader(j.f),
+		offset: 0,
+	}
 	for {
-		e, err := decodeEntry(reader)
+		e, err := decodeEntry(j.offsetReader)
 		if err != nil {
 			if err == io.EOF {
 				return nil
 			}
-			return err
+			return errors.WithStack(err)
 		}
-		if err := cb(e); err != nil {
+		if err := cb(&writeRequest{entry: e}); err != nil {
 			return err
 		}
 	}
+}
+
+type offsetReader struct {
+	reader io.Reader
+	offset int64
+}
+
+func (o *offsetReader) Read(p []byte) (n int, err error) {
+	n, err = o.reader.Read(p)
+	o.offset += int64(n)
+	return n, err
+}
+
+func (j *journal) RebuildIndex() error {
+	if _, err := j.f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	j.index = new(journalIndex)
+	var offset int64
+	return j.Read(func(e *writeRequest) error {
+		j.index.append(jIndex{
+			Offset: offset,
+			Index:  e.entry.Ver.Index,
+		})
+		offset = j.offsetReader.offset
+		return nil
+	})
 }

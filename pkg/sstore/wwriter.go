@@ -24,21 +24,26 @@ import (
 )
 
 type wWriter struct {
-	wal        *journal
-	queue      *block_queue.Queue
-	commit     *block_queue.Queue
-	files      *manifest
-	maxWalSize int64
+	journal        *journal
+	queue          *block_queue.Queue
+	commitQueue    *block_queue.Queue
+	syncer         *Syncer
+	manifest       *manifest
+	maxJournalSize int64
 }
 
-func newWWriter(w *journal, queue *block_queue.Queue, commitQueue *block_queue.Queue,
+func newWWriter(journal *journal,
+	queue *block_queue.Queue,
+	commitQueue *block_queue.Queue,
+	syncer *Syncer,
 	files *manifest, maxWalSize int64) *wWriter {
 	return &wWriter{
-		wal:        w,
-		queue:      queue,
-		commit:     commitQueue,
-		files:      files,
-		maxWalSize: maxWalSize,
+		journal:        journal,
+		queue:          queue,
+		commitQueue:    commitQueue,
+		syncer:         syncer,
+		manifest:       files,
+		maxJournalSize: maxWalSize,
 	}
 }
 
@@ -47,31 +52,32 @@ func (worker *wWriter) append(e *writeRequest) {
 	worker.queue.Push(e)
 }
 
-func (worker *wWriter) walFilename() string {
-	return filepath.Base(worker.wal.Filename())
+func (worker *wWriter) JournalFilename() string {
+	return filepath.Base(worker.journal.Filename())
 }
 
-func (worker *wWriter) createNewWal() error {
-	walFile, err := worker.files.getNextWal()
+func (worker *wWriter) createNewJournal() error {
+	index, err := worker.manifest.geNextJournal()
 	if err != nil {
 		return err
 	}
-	wal, err := openJournal(walFile)
+	journal, err := openJournal(index)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	if err := worker.files.appendWal(&pb.AppendWal{Filename: walFile}); err != nil {
+	if err := worker.manifest.AppendJournal(&pb.AppendJournal{Filename: index}); err != nil {
 		return err
 	}
-	if err := worker.wal.Close(); err != nil {
+	if err := worker.journal.Close(); err != nil {
 		return err
 	}
-	header := worker.wal.GetMeta()
+	header := worker.journal.GetMeta()
 	header.Old = true
-	if err := worker.files.setWalHeader(header); err != nil {
+	if err := worker.manifest.setJournalHeader(header); err != nil {
 		return err
 	}
-	worker.wal = wal
+	worker.journal = journal
+	worker.syncer.appendJournal(journal)
 	return nil
 }
 
@@ -86,28 +92,29 @@ func (worker *wWriter) start() {
 				e := entries[i]
 				switch request := e.(type) {
 				case *writeRequest:
-					if worker.wal.Size() > worker.maxWalSize {
-						if err := worker.createNewWal(); err != nil {
+					if worker.journal.Size() > worker.maxJournalSize {
+						if err := worker.createNewJournal(); err != nil {
 							request.cb(-1, err)
 							continue
 						}
 					}
-					if err := worker.wal.Write(request); err != nil {
+					if err := worker.journal.Write(request); err != nil {
 						request.cb(-1, err)
 					} else {
 						writeRequests = append(writeRequests, request)
 					}
 				case *closeRequest:
-					_ = worker.wal.Close()
-					worker.commit.Push(e)
+					_ = worker.journal.Close()
+					worker.commitQueue.Push(e)
 					return
 				}
 			}
 			if len(writeRequests) > 0 {
-				if err := worker.wal.Flush(); err != nil {
+				if err := worker.journal.Flush(); err != nil {
 					log.Fatal(err.Error())
 				}
-				worker.commit.PushMany(writeRequests)
+				worker.commitQueue.PushMany(writeRequests)
+				worker.syncer.PushMany(writeRequests)
 			}
 		}
 	}()

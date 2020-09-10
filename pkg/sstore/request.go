@@ -49,7 +49,7 @@ func (e *writeRequest) WriteTo(w io.Writer) (n int64, err error) {
 	return int64(n2), err
 }
 
-func decodeEntry(reader io.Reader) (*writeRequest, error) {
+func decodeEntry(reader io.Reader) (*pb.Entry, error) {
 	var size int32
 	if err := binary.Read(reader, binary.BigEndian, &size); err != nil {
 		return nil, err
@@ -62,11 +62,5 @@ func decodeEntry(reader io.Reader) (*writeRequest, error) {
 	if err := proto.Unmarshal(data, &entry); err != nil {
 		return nil, err
 	}
-	return &writeRequest{
-		entry: &entry,
-		close: false,
-		end:   0,
-		err:   nil,
-		cb:    nil,
-	}, nil
+	return &entry, nil
 }

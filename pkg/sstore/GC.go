@@ -14,17 +14,17 @@
 package sstore
 
 import (
+	"fmt"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/pkg/errors"
-	"os"
 	"path/filepath"
 )
 
 // GC will delete journal,segment
 // delete journal
 // delete segment
-func (sstore *SStore) gcWal() error {
-	walFiles := sstore.manifest.getWalFiles()
+func (sstore *SStore) clearJournal() error {
+	journalFiles := sstore.manifest.getJournalFiles()
 	segmentFiles := sstore.manifest.getSegmentFiles()
 	if len(segmentFiles) == 0 {
 		return nil
@@ -34,32 +34,31 @@ func (sstore *SStore) gcWal() error {
 	if segment == nil {
 		return errors.Errorf("no find segment [%s]", last)
 	}
-	ToVersion := segment.toVersion()
+	FromVersion := segment.FromVersion()
 	segment.refDec()
-	skip := sstore.wWriter.walFilename()
-	for _, filename := range walFiles {
-		if filename == skip {
-			continue
-		}
-		walFile := filepath.Join(sstore.options.WalDir, filename)
-		header, err := sstore.manifest.getWalHeader(filename)
+	for _, filename := range journalFiles {
+		journalFile := filepath.Join(sstore.options.JournalDir, filename)
+		header, err := sstore.manifest.getJournalHeader(filename)
 		if err != nil {
 			continue
 		}
-		if header.Old && header.To.Index <= ToVersion.Index {
-			if err := sstore.manifest.deleteWal(&pb.DeleteWal{Filename: filename}); err != nil {
+		if header.Old && header.To.Index < FromVersion.Index {
+			//first delete from manifest
+			//and than delete from syncer
+			fmt.Println("delete",journalFile)
+			if err := sstore.manifest.deleteJournal(&pb.DeleteJournal{Filename: filename}); err != nil {
 				return err
 			}
-			if err := os.Remove(walFile); err != nil {
-				return errors.WithStack(err)
+			if err := sstore.manifest.delWalHeader(&pb.DelJournalHeader{Filename: filename}); err != nil {
+				return err
 			}
-			_ = sstore.manifest.delWalHeader(&pb.DelWalHeader{Filename: filename})
+			sstore.syncer.deleteJournal(journalFile)
 		}
 	}
 	return nil
 }
 
-func (sstore *SStore) gcSegment() error {
+func (sstore *SStore) clearSegment() error {
 	segmentFiles := sstore.manifest.getSegmentFiles()
 	if len(segmentFiles) <= sstore.options.MaxSegmentCount {
 		return nil
