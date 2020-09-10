@@ -14,12 +14,13 @@
 package sstore
 
 import (
+	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"sync"
 	"time"
 )
 
 type int64LockMap struct {
-	version     Version
+	version     *pb.Version
 	locker      *sync.RWMutex
 	cloneLocker *sync.Mutex
 	level0      map[int64]int64
@@ -35,65 +36,65 @@ func newInt64LockMap() *int64LockMap {
 	}
 }
 
-func (sizeMap *int64LockMap) set(streamID int64, pos int64, ver Version) {
-	sizeMap.locker.Lock()
-	sizeMap.version = ver
-	if sizeMap.level0 != nil {
-		sizeMap.level0[streamID] = pos
-		sizeMap.locker.Unlock()
+func (int64Map *int64LockMap) set(streamID int64, pos int64, ver *pb.Version) {
+	int64Map.locker.Lock()
+	int64Map.version = ver
+	if int64Map.level0 != nil {
+		int64Map.level0[streamID] = pos
+		int64Map.locker.Unlock()
 		return
 	}
-	sizeMap.level1[streamID] = pos
-	sizeMap.locker.Unlock()
+	int64Map.level1[streamID] = pos
+	int64Map.locker.Unlock()
 	return
 }
 
-func (sizeMap *int64LockMap) get(streamID int64) (int64, bool) {
-	sizeMap.locker.RLock()
-	if sizeMap.level0 != nil {
-		if size, ok := sizeMap.level0[streamID]; ok {
-			sizeMap.locker.RUnlock()
+func (int64Map *int64LockMap) get(streamID int64) (int64, bool) {
+	int64Map.locker.RLock()
+	if int64Map.level0 != nil {
+		if size, ok := int64Map.level0[streamID]; ok {
+			int64Map.locker.RUnlock()
 			return size, ok
 		}
 	}
-	size, ok := sizeMap.level1[streamID]
-	sizeMap.locker.RUnlock()
+	size, ok := int64Map.level1[streamID]
+	int64Map.locker.RUnlock()
 	return size, ok
 }
 
-func (sizeMap *int64LockMap) mergeMap(count int) bool {
-	sizeMap.locker.Lock()
-	for k, v := range sizeMap.level0 {
+func (int64Map *int64LockMap) mergeMap(count int) bool {
+	int64Map.locker.Lock()
+	for k, v := range int64Map.level0 {
 		if count--; count == 0 {
-			sizeMap.locker.Unlock()
+			int64Map.locker.Unlock()
 			return false
 		}
-		sizeMap.level1[k] = v
-		delete(sizeMap.level0, k)
+		int64Map.level1[k] = v
+		delete(int64Map.level0, k)
 	}
-	sizeMap.level0 = nil
-	sizeMap.locker.Unlock()
+	int64Map.level0 = nil
+	int64Map.locker.Unlock()
 	return true
 }
 
-func (sizeMap *int64LockMap) CloneMap() (map[int64]int64, Version) {
-	sizeMap.cloneLocker.Lock()
-	sizeMap.locker.Lock()
-	sizeMap.level0 = make(map[int64]int64, 1024)
-	cloneMap := make(map[int64]int64, len(sizeMap.level1))
-	ver := sizeMap.version
-	sizeMap.locker.Unlock()
+func (int64Map *int64LockMap) CloneMap() (map[int64]int64, *pb.Version) {
+	int64Map.cloneLocker.Lock()
+	int64Map.locker.Lock()
+	int64Map.level0 = make(map[int64]int64, 1024)
+	cloneMap := make(map[int64]int64, len(int64Map.level1))
+	ver := int64Map.version
+	int64Map.locker.Unlock()
 	defer func() {
 		go func() {
-			defer sizeMap.cloneLocker.Unlock()
+			defer int64Map.cloneLocker.Unlock()
 			for {
-				if !sizeMap.mergeMap(20000) {
+				if !int64Map.mergeMap(20000) {
 					time.Sleep(time.Millisecond * 10)
 				}
 			}
 		}()
 	}()
-	for k, v := range sizeMap.level1 {
+	for k, v := range int64Map.level1 {
 		cloneMap[k] = v
 	}
 	return cloneMap, ver

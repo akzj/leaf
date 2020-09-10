@@ -49,13 +49,13 @@ func (index *offsetIndex) find(offset int64) (offsetItem, error) {
 	if len(index.items) == 0 {
 		return offsetIndexNoFind, errors.WithStack(ErrNoFindOffsetIndex)
 	}
-	if index.items[len(index.items)-1].begin <= offset {
+	if index.items[len(index.items)-1].end <= offset {
 		return index.items[len(index.items)-1], nil
 	}
 	i := sort.Search(len(index.items), func(i int) bool {
-		return index.items[i].begin > offset
+		return offset < index.items[i].end
 	})
-	return index.items[i-1], nil
+	return index.items[i], nil
 }
 
 func (index *offsetIndex) update(item offsetItem) error {

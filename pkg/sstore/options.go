@@ -27,7 +27,7 @@ type Options struct {
 	BlockSize                     int    `json:"block_size"`
 	MaxMStreamTableSize           int64  `json:"max_mStream_table_size"`
 	MaxImmutableMStreamTableCount int    `json:"max_immutable_mStream_table_count"`
-	EntryQueueCap                 int    `json:"entry_queue_cap"`
+	RequestQueueCap               int    `json:"request_queue_cap"`
 	MaxWalSize                    int64  `json:"max_wal_size"`
 }
 
@@ -44,7 +44,7 @@ func DefaultOptions(Path string) Options {
 		BlockSize:                     4 * KB,
 		MaxMStreamTableSize:           256 * MB,
 		MaxImmutableMStreamTableCount: 4,
-		EntryQueueCap:                 128,
+		RequestQueueCap:               128,
 		MaxWalSize:                    64 * MB,
 	}
 }
@@ -97,8 +97,8 @@ func (opt Options) WithMaxWalSize(val int64) Options {
 	return opt
 }
 
-//EntryQueueCap
+//RequestQueueCap
 func (opt Options) WithEntryQueueCap(val int) Options {
-	opt.EntryQueueCap = val
+	opt.RequestQueueCap = val
 	return opt
 }

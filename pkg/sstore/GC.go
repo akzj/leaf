@@ -14,6 +14,7 @@
 package sstore
 
 import (
+	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/pkg/errors"
 	"os"
 	"path/filepath"
@@ -23,8 +24,8 @@ import (
 // delete journal
 // delete segment
 func (sstore *SStore) gcWal() error {
-	walFiles := sstore.files.getWalFiles()
-	segmentFiles := sstore.files.getSegmentFiles()
+	walFiles := sstore.manifest.getWalFiles()
+	segmentFiles := sstore.manifest.getSegmentFiles()
 	if len(segmentFiles) == 0 {
 		return nil
 	}
@@ -33,7 +34,7 @@ func (sstore *SStore) gcWal() error {
 	if segment == nil {
 		return errors.Errorf("no find segment [%s]", last)
 	}
-	LastEntryID := segment.lastEntryID()
+	ToVersion := segment.toVersion()
 	segment.refDec()
 	skip := sstore.wWriter.walFilename()
 	for _, filename := range walFiles {
@@ -41,25 +42,25 @@ func (sstore *SStore) gcWal() error {
 			continue
 		}
 		walFile := filepath.Join(sstore.options.WalDir, filename)
-		header, err := sstore.files.getWalHeader(filename)
+		header, err := sstore.manifest.getWalHeader(filename)
 		if err != nil {
 			continue
 		}
-		if header.Old && header.LastEntryID <= LastEntryID {
-			if err := sstore.files.deleteWal(deleteWal{Filename: filename}); err != nil {
+		if header.Old && header.To.Index <= ToVersion.Index {
+			if err := sstore.manifest.deleteWal(&pb.DeleteWal{Filename: filename}); err != nil {
 				return err
 			}
 			if err := os.Remove(walFile); err != nil {
 				return errors.WithStack(err)
 			}
-			_ = sstore.files.delWalHeader(delWalHeader{Filename: filename})
+			_ = sstore.manifest.delWalHeader(&pb.DelWalHeader{Filename: filename})
 		}
 	}
 	return nil
 }
 
 func (sstore *SStore) gcSegment() error {
-	segmentFiles := sstore.files.getSegmentFiles()
+	segmentFiles := sstore.manifest.getSegmentFiles()
 	if len(segmentFiles) <= sstore.options.MaxSegmentCount {
 		return nil
 	}
@@ -75,7 +76,7 @@ func (sstore *SStore) gcSegment() error {
 		if err := sstore.committer.deleteSegment(filename); err != nil {
 			return err
 		}
-		if err := sstore.files.deleteSegment(deleteSegment{Filename: filename}); err != nil {
+		if err := sstore.manifest.deleteSegment(&pb.DeleteSegment{Filename: filename}); err != nil {
 			return err
 		}
 		segment.refDec()

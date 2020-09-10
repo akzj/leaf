@@ -58,7 +58,7 @@ func (r *reader) Seek(offset int64, whence int) (int64, error) {
 
 func (r *reader) Read(p []byte) (int, error) {
 	buf := p
-	var ret int
+	var size int
 	for len(buf) > 0 {
 		item, err := r.index.find(r.offset)
 		if err != nil {
@@ -68,35 +68,36 @@ func (r *reader) Read(p []byte) (int, error) {
 			n, err := item.mStream.ReadAt(buf, r.offset)
 			if err != nil {
 				if err == io.EOF {
-					if ret == 0 {
+					if size == 0 {
 						return 0, err
 					}
-					return ret, nil
+					return size, nil
 				}
-				return ret, err
+				return size, err
 			}
 			buf = buf[n:]
-			ret += n
+			size += n
 			r.offset += int64(n)
 		} else if item.segment != nil {
 			if item.segment.refInc() < 0 {
-				return ret, errors.WithStack(ErrOffset)
+				return size, errors.WithStack(ErrOffset)
 			}
 			n, err := item.segment.Reader(r.streamID).ReadAt(buf, r.offset)
 			item.segment.refDec()
 			if err != nil {
 				if err == io.EOF {
-					if n == 0 {
-						return ret, err
+					if size == 0 {
+						return size, err
 					}
+					return size, nil
 				} else {
-					return ret, err
+					return size, err
 				}
 			}
 			buf = buf[n:]
-			ret += n
+			size += n
 			r.offset += int64(n)
 		}
 	}
-	return ret, nil
+	return size, nil
 }

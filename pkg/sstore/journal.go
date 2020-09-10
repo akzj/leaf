@@ -15,6 +15,7 @@ package sstore
 
 import (
 	"bufio"
+	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/pkg/errors"
 	"io"
 	"os"
@@ -23,21 +24,13 @@ import (
 
 const version1 = "ver1"
 
-type JournalMeta struct {
-	Old          bool   `json:"old"`
-	Filename     string `json:"filename"`
-	Version      string `json:"version"`
-	FirstEntryID int64  `json:"first_entry_id"`
-	LastEntryID  int64  `json:"last_entry_id"`
-}
-
 // write ahead log
 type journal struct {
 	filename string
 	size     int64
 	f        *os.File
 	writer   *bufio.Writer
-	meta     JournalMeta
+	meta     *pb.JournalMeta
 }
 
 func openJournal(filename string) (*journal, error) {
@@ -53,12 +46,10 @@ func openJournal(filename string) (*journal, error) {
 		size:     0,
 		f:        f,
 		writer:   bufio.NewWriterSize(f, 4*1024*1024),
-		meta: JournalMeta{
-			Filename:     filepath.Base(filename),
-			Version:      version1,
-			FirstEntryID: -1,
-			LastEntryID:  -1,
-			Old:          false,
+		meta: &pb.JournalMeta{
+			Old:      false,
+			Filename: filepath.Base(filename),
+			Version:  version1,
 		},
 	}
 	return w, nil
@@ -78,7 +69,7 @@ func (j *journal) SeekEnd() error {
 	return nil
 }
 
-func (j *journal) GetMeta() JournalMeta {
+func (j *journal) GetMeta() *pb.JournalMeta {
 	return j.meta
 }
 
@@ -96,15 +87,16 @@ func (j *journal) Sync() error {
 	return nil
 }
 
-func (j *journal) Write(e *entry) error {
-	j.meta.LastEntryID = e.ID
-	if j.meta.FirstEntryID == -1 {
-		j.meta.FirstEntryID = e.ID
+func (j *journal) Write(e *writeRequest) error {
+	j.meta.To = e.entry.Ver
+	if j.meta.From == nil {
+		j.meta.From = e.entry.Ver
 	}
-	if err := e.write(j.writer); err != nil {
+	if n, err := e.WriteTo(j.writer); err != nil {
 		return err
+	} else {
+		j.size += n
 	}
-	j.size += int64(e.size())
 	return nil
 }
 
@@ -126,7 +118,7 @@ func (j *journal) Filename() string {
 	return j.filename
 }
 
-func (j *journal) Read(cb func(e *entry) error) error {
+func (j *journal) Read(cb func(e *writeRequest) error) error {
 	reader := bufio.NewReader(j.f)
 	for {
 		e, err := decodeEntry(reader)

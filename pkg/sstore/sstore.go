@@ -14,6 +14,8 @@
 package sstore
 
 import (
+	"github.com/akzj/streamIO/pkg/block-queue"
+	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/pkg/errors"
 	"io"
 	"os"
@@ -23,28 +25,28 @@ import (
 
 type SStore struct {
 	options    Options
-	entryQueue *entryQueue
+	entryQueue *block_queue.Queue
 
-	entryID     int64
+	version     *pb.Version
 	notifyPool  sync.Pool
 	endMap      *int64LockMap
 	committer   *committer
 	indexTable  *indexTable
 	endWatchers *endWatchers
 	wWriter     *wWriter
-	files       *manifest
+	manifest    *manifest
 	isClose     int32
 }
 
 type Snapshot struct {
 	EndMap  map[int64]int64 `json:"end_map"`
-	Version Version         `json:"version"`
+	Version *pb.Version     `json:"version"`
 }
 
 func Open(options Options) (*SStore, error) {
 	var sstore = &SStore{
 		options:    options,
-		entryQueue: newEntryQueue(options.EntryQueueCap),
+		entryQueue: block_queue.NewQueue(options.RequestQueueCap),
 		notifyPool: sync.Pool{
 			New: func() interface{} {
 				return make(chan interface{}, 1)
@@ -53,6 +55,9 @@ func Open(options Options) (*SStore, error) {
 		endMap:      newInt64LockMap(),
 		indexTable:  newIndexTable(),
 		endWatchers: newEndWatchers(),
+		wWriter:     nil,
+		manifest:    nil,
+		isClose:     0,
 	}
 
 	if err := reload(sstore); err != nil {
@@ -66,7 +71,7 @@ func (sstore *SStore) Options() Options {
 }
 
 func (sstore *SStore) nextEntryID() int64 {
-	return atomic.AddInt64(&sstore.entryID, 1)
+	return atomic.AddInt64(&sstore.version.Index, 1)
 }
 
 //Append append the data to end of the stream
@@ -87,12 +92,20 @@ func (sstore *SStore) Append(streamID int64, data []byte, offset int64) (int64, 
 
 //AsyncAppend async append the data to end of the stream
 func (sstore *SStore) AsyncAppend(streamID int64, data []byte, offset int64, cb func(offset int64, err error)) {
-	sstore.entryQueue.put(&entry{
-		ID:       sstore.nextEntryID(),
-		StreamID: streamID,
-		Offset:   offset,
-		data:     data,
-		cb:       cb,
+	sstore.entryQueue.Push(&writeRequest{
+		entry: &pb.Entry{
+			StreamID: streamID,
+			Offset:   offset,
+			Ver: &pb.Version{
+				Term:  0,
+				Index: sstore.nextEntryID(),
+			},
+			Data: data,
+		},
+		close: false,
+		end:   0,
+		err:   nil,
+		cb:    cb,
 	})
 }
 
@@ -146,7 +159,7 @@ func (sstore *SStore) Close() error {
 		return errors.New("repeated close")
 	}
 	sstore.wWriter.close()
-	sstore.files.close()
+	sstore.manifest.close()
 	sstore.endWatchers.close()
 	return nil
 }
@@ -177,7 +190,10 @@ func (sstore *SStore) OpenSegment(name string) (*Segment, error) {
 }
 
 func (sstore *SStore) Sync(index int64) {
-	sstore.committer.getSegment2(index)
+	segment := sstore.committer.getSegment2(index)
+	if segment == nil {
+		//todo sync from journal
+	}
 }
 
 type Segment struct {

@@ -15,6 +15,8 @@ package sstore
 
 import (
 	"fmt"
+	block_queue "github.com/akzj/streamIO/pkg/block-queue"
+	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/pkg/errors"
 	"os"
 	"path/filepath"
@@ -49,10 +51,10 @@ func reload(sStore *SStore) error {
 	if err != nil {
 		return err
 	}
-	sStore.files = manifest
+	sStore.manifest = manifest
 
 	mStreamTable := newMStreamTable(sStore.endMap, sStore.options.BlockSize, 128)
-	commitQueue := newEntryQueue(sStore.options.EntryQueueCap)
+	commitQueue := block_queue.NewQueue(sStore.options.RequestQueueCap)
 	committer := newCommitter(sStore.options,
 		sStore.endWatchers,
 		sStore.indexTable,
@@ -64,25 +66,32 @@ func reload(sStore *SStore) error {
 	sStore.committer = committer
 
 	sStore.committer.start()
-	sStore.files.start()
+	sStore.manifest.start()
 	sStore.endWatchers.start()
 
 	//rebuild segment index
 	segmentFiles := manifest.getSegmentFiles()
+	sortIntFilename(segmentFiles)
 	for _, file := range segmentFiles {
 		segment, err := openSegment(filepath.Join(sStore.options.SegmentDir, file))
 		if err != nil {
 			return err
 		}
 		for _, info := range segment.meta.OffSetInfos {
-			sStore.endMap.set(info.StreamID, info.End, segment.meta.VerFrom)
+			sStore.endMap.set(info.StreamID, info.End, segment.meta.To)
 		}
-		if segment.meta.LastEntryID <= sStore.entryID {
+		if sStore.version == nil {
+			sStore.version = segment.meta.To
+		} else if segment.meta.From.Index <= sStore.version.Index {
 			return errors.Errorf("segment meta LastEntryID[%d] error",
-				segment.meta.LastEntryID)
+				segment.meta.From.Index)
 		}
-		sStore.entryID = segment.meta.LastEntryID
+		sStore.version = segment.meta.To
 		sStore.committer.appendSegment(file, segment)
+	}
+
+	if sStore.version == nil {
+		sStore.version = &pb.Version{}
 	}
 
 	//replay entries in the journal
@@ -95,20 +104,21 @@ func reload(sStore *SStore) error {
 		}
 		//skip
 		if walHeader, err := manifest.getWalHeader(filename); err == nil {
-			if walHeader.Old && walHeader.LastEntryID <= sStore.entryID {
+			if walHeader.Old && walHeader.To.Index <= sStore.version.Index {
 				continue
 			}
 		}
-		if err := journal.Read(func(e *entry) error {
-			if e.ID <= sStore.entryID {
+		if err := journal.Read(func(e *writeRequest) error {
+			if e.entry.Ver.Index <= sStore.version.Index {
 				return nil //skip
-			} else if e.ID == sStore.entryID+1 {
+			} else if e.entry.Ver.Index == sStore.version.Index+1 {
 				e.cb = cb
-				sStore.entryID++
-				committer.queue.put(e)
+				sStore.version = e.entry.Ver
+				committer.queue.Push(e)
 			} else {
 				return errors.WithMessage(ErrWal,
-					fmt.Sprintf("e.ID[%d] sStore.entryID+1[%d] %s", e.ID, sStore.entryID+1, filename))
+					fmt.Sprintf("e.ID[%d] sStore.index+1[%d] %s",
+						e.entry.Ver.Index, sStore.version.Index+1, filename))
 			}
 			return nil
 		}); err != nil {
@@ -131,17 +141,20 @@ func reload(sStore *SStore) error {
 			return errors.WithStack(err)
 		}
 	} else {
-		file := manifest.getNextWal()
+		file, err := manifest.getNextWal()
+		if err != nil {
+			panic(err)
+		}
 		w, err = openJournal(file)
 		if err != nil {
 			return err
 		}
-		if err := manifest.appendWal(appendWal{Filename: file}); err != nil {
+		if err := manifest.appendWal(&pb.AppendWal{Filename: file}); err != nil {
 			return err
 		}
 	}
 	sStore.wWriter = newWWriter(w, sStore.entryQueue,
-		sStore.committer.queue, sStore.files, sStore.options.MaxWalSize)
+		sStore.committer.queue, sStore.manifest, sStore.options.MaxWalSize)
 	sStore.wWriter.start()
 
 	//clear dead journal

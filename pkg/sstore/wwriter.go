@@ -14,6 +14,8 @@
 package sstore
 
 import (
+	block_queue "github.com/akzj/streamIO/pkg/block-queue"
+	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/pkg/errors"
 	"log"
 	"math"
@@ -23,14 +25,13 @@ import (
 
 type wWriter struct {
 	wal        *journal
-	queue      *entryQueue
-	commit     *entryQueue
+	queue      *block_queue.Queue
+	commit     *block_queue.Queue
 	files      *manifest
 	maxWalSize int64
 }
 
-func newWWriter(w *journal, queue *entryQueue,
-	commitQueue *entryQueue,
+func newWWriter(w *journal, queue *block_queue.Queue, commitQueue *block_queue.Queue,
 	files *manifest, maxWalSize int64) *wWriter {
 	return &wWriter{
 		wal:        w,
@@ -41,9 +42,9 @@ func newWWriter(w *journal, queue *entryQueue,
 	}
 }
 
-//append the entry to the queue of writer
-func (worker *wWriter) append(e *entry) {
-	worker.queue.put(e)
+//append the writeRequest to the queue of writer
+func (worker *wWriter) append(e *writeRequest) {
+	worker.queue.Push(e)
 }
 
 func (worker *wWriter) walFilename() string {
@@ -51,12 +52,15 @@ func (worker *wWriter) walFilename() string {
 }
 
 func (worker *wWriter) createNewWal() error {
-	walFile := worker.files.getNextWal()
+	walFile, err := worker.files.getNextWal()
+	if err != nil {
+		return err
+	}
 	wal, err := openJournal(walFile)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	if err := worker.files.appendWal(appendWal{Filename: walFile}); err != nil {
+	if err := worker.files.appendWal(&pb.AppendWal{Filename: walFile}); err != nil {
 		return err
 	}
 	if err := worker.wal.Close(); err != nil {
@@ -76,32 +80,34 @@ const closeSignal = math.MinInt64
 func (worker *wWriter) start() {
 	go func() {
 		for {
-			var commit = entriesPool.Get().([]*entry)[0:]
-			entries := worker.queue.take()
+			var writeRequests = objsPool.Get().([]interface{})[:0]
+			entries := worker.queue.PopAll(nil)
 			for i := range entries {
 				e := entries[i]
-				if e.ID == closeSignal {
+				switch request := e.(type) {
+				case *writeRequest:
+					if worker.wal.Size() > worker.maxWalSize {
+						if err := worker.createNewWal(); err != nil {
+							request.cb(-1, err)
+							continue
+						}
+					}
+					if err := worker.wal.Write(request); err != nil {
+						request.cb(-1, err)
+					} else {
+						writeRequests = append(writeRequests, request)
+					}
+				case *closeRequest:
 					_ = worker.wal.Close()
-					worker.commit.put(e)
+					worker.commit.Push(e)
 					return
 				}
-				if worker.wal.Size() > worker.maxWalSize {
-					if err := worker.createNewWal(); err != nil {
-						e.cb(-1, err)
-						continue
-					}
-				}
-				if err := worker.wal.Write(e); err != nil {
-					e.cb(-1, err)
-				} else {
-					commit = append(commit, e)
-				}
 			}
-			if len(commit) > 0 {
+			if len(writeRequests) > 0 {
 				if err := worker.wal.Flush(); err != nil {
 					log.Fatal(err.Error())
 				}
-				worker.commit.putEntries(commit)
+				worker.commit.PushMany(writeRequests)
 			}
 		}
 	}()
@@ -110,11 +116,8 @@ func (worker *wWriter) start() {
 func (worker *wWriter) close() {
 	var wg sync.WaitGroup
 	wg.Add(1)
-	worker.queue.put(&entry{
-		ID: closeSignal,
-		cb: func(_ int64, err error) {
-			wg.Done()
-		},
-	})
+	worker.queue.Push(&closeRequest{cb: func() {
+		wg.Done()
+	}})
 	wg.Wait()
 }

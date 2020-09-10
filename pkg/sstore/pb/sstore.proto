@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package pb;
+option go_package = "github.com/akzj/streamIO/pkg/sstore/pb;pb";
+
+message Version{
+  int64 term = 1;
+  int64 index = 2;
+}
+
+message Entry{
+  int64 streamID = 2;
+  int64 offset = 3;
+  bytes data = 5;
+  Version ver = 4;
+}
+
+
+message OffsetInfo  {
+  int64 streamID = 1;
+  int64 begin = 2;
+  int64 offset = 3;
+  int64  end = 4;
+  uint32 CRC = 5;
+}
+
+
+message SegmentMeta {
+  Version From = 1;
+  Version To = 2;
+  int64 CreateTS = 3;
+  map<int64, OffsetInfo> OffSetInfos = 4;
+}
+
+
+message JournalMeta {
+  bool Old = 1;
+  string Filename = 2;
+  string Version = 3;
+  Version From = 4;
+  Version To = 5;
+}
+
+
+message AppendWal {
+  string  Filename = 1;
+}
+
+message DeleteWal {
+  string  Filename = 1;
+}
+
+message AppendSegment  {
+  string  Filename = 1;
+}
+
+message DeleteSegment  {
+  string  Filename = 1;
+}
+
+message DelWalHeader  {
+  string  Filename = 1;
+}
+
+message FileIndex {
+  int64  segment_index = 5;
+  int64  wal_index = 6;
+  int64  manifest_index = 7;
+}
+message ManifestSnapshot{
+  FileIndex file_index = 5;
+  Version      version = 1;
+  repeated string segments = 2;
+  repeated  string journals = 3;
+  map<string, JournalMeta> wal_headers = 4;
+}

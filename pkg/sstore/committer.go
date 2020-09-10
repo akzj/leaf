@@ -14,6 +14,8 @@
 package sstore
 
 import (
+	block_queue "github.com/akzj/streamIO/pkg/block-queue"
+	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"log"
 	"path/filepath"
 	"sort"
@@ -21,7 +23,7 @@ import (
 )
 
 type committer struct {
-	queue *entryQueue
+	queue *block_queue.Queue
 
 	maxMStreamTableSize int64
 	mutableMStreamMap   *mStreamTable
@@ -43,7 +45,7 @@ type committer struct {
 	blockSize int
 
 	cbWorker      *cbWorker
-	callbackQueue *entryQueue
+	callbackQueue *block_queue.Queue
 }
 
 func newCommitter(options Options,
@@ -51,11 +53,11 @@ func newCommitter(options Options,
 	indexTable *indexTable,
 	sizeMap *int64LockMap,
 	mutableMStreamMap *mStreamTable,
-	queue *entryQueue,
+	queue *block_queue.Queue,
 	files *manifest,
 	blockSize int) *committer {
 
-	cbQueue := newEntryQueue(128)
+	cbQueue := block_queue.NewQueue(128)
 
 	return &committer{
 		files:                         files,
@@ -103,11 +105,11 @@ func (c *committer) getSegment2(index int64) *segment {
 		}
 		return segments[i].filename < segments[i].filename
 	})
-	if index > segments[len(segments)-1].meta.VerTo.Index {
+	if index > segments[len(segments)-1].meta.To.Index {
 		return nil
 	}
 	i := sort.Search(len(segments), func(i int) bool {
-		return index < segments[i].meta.VerFrom.Index
+		return index < segments[i].meta.From.Index
 	})
 	return segments[i-1]
 }
@@ -159,7 +161,7 @@ func (c *committer) flushCallback(filename string, _ *mStreamTable) {
 			c.indexTable.remove(mStream)
 		}
 	}
-	if err := c.files.appendSegment(appendSegment{Filename: filename}); err != nil {
+	if err := c.files.appendSegment(&pb.AppendSegment{Filename: filename}); err != nil {
 		log.Fatal(err.Error())
 	}
 }
@@ -184,32 +186,33 @@ func (c *committer) start() {
 	c.flusher.start()
 	go func() {
 		for {
-			entries := c.queue.take()
-			for i := range entries {
-				e := entries[i]
-				if e.ID == closeSignal {
+			items := c.queue.PopAll(nil)
+			for i := range items {
+				request := items[i]
+				switch request := request.(type) {
+				case *closeRequest:
 					c.flusher.close()
-					c.callbackQueue.put(e)
-					return
-				}
-				mStream, end := c.mutableMStreamMap.appendEntry(e)
-				if end == -1 {
-					e.err = ErrOffset
-					continue
-				}
-				e.end = end
-				if mStream != nil {
-					c.indexTable.update(mStream)
-				}
-				item := notifyPool.Get().(*notify)
-				item.streamID = e.StreamID
-				item.end = end
-				c.endWatchers.notify(item)
-				if c.mutableMStreamMap.mSize >= c.maxMStreamTableSize {
-					c.flush()
+					c.callbackQueue.Push(request)
+				case *writeRequest:
+					mStream, end := c.mutableMStreamMap.appendEntry(request)
+					if end == -1 {
+						request.err = ErrOffset
+						continue
+					}
+					request.end = end
+					if mStream != nil {
+						c.indexTable.update(mStream)
+					}
+					item := notifyPool.Get().(*notify)
+					item.streamID = request.entry.StreamID
+					item.end = end
+					c.endWatchers.notify(item)
+					if c.mutableMStreamMap.mSize >= c.maxMStreamTableSize {
+						c.flush()
+					}
+					c.callbackQueue.Push(request)
 				}
 			}
-			c.callbackQueue.putEntries(entries)
 		}
 	}()
 }
