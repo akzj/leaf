@@ -19,9 +19,12 @@ func (s *Service) SyncRequest(request *proto.SyncRequest, server proto.SyncServi
 		return s.handleSyncSegmentRequest(request.SyncSegmentRequest, server)
 	}
 	s.store.Sync(request.Index)
+	return nil
 }
 
-func (s *Service) handleSyncSegmentRequest(request *proto.SyncSegmentRequest, stream proto.SyncService_SyncRequestServer) error {
+func (s *Service) handleSyncSegmentRequest(request *proto.SyncSegmentRequest,
+	stream proto.SyncService_SyncRequestServer) error {
+
 	logEntry := log.WithField("segment", request.Name).
 		WithField("offset", request.Offset)
 	logEntry.Info("start SyncSegment")
