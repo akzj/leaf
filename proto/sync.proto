@@ -1,9 +1,9 @@
 syntax = "proto3";
-
-
 package proto;
 
 option go_package = "github.com/akzj/streamIO/proto;proto";
+
+import "streamIO/pkg/sstore/pb/sstore.proto";
 
 
 message SyncSegmentRequest{
@@ -30,10 +30,12 @@ message SegmentData{
 message SegmentEnd{
 }
 
+
 message SyncResponse{
   SegmentInfo segment_info = 1;
   SegmentData segment_data = 2;
   SegmentEnd segment_end = 3;
+  pb.Entry entry = 4;
 }
 
 

@@ -177,8 +177,8 @@ func (sstore *SStore) GetSnapshot() Snapshot {
 	}
 }
 
-func (sstore *SStore) Sync(ctx context.Context, ServerID int64, index int64, f func(SyncCallback)) {
-	sstore.syncer.SyncRequest(ctx, ServerID, index, f)
+func (sstore *SStore) Sync(ctx context.Context, ServerID int64, index int64, f func(SyncCallback) error) error {
+	return sstore.syncer.SyncRequest(ctx, ServerID, index, f)
 }
 
 func (sstore *SStore) OpenSegmentReader(filename string) (*SegmentReader, error) {
@@ -189,7 +189,7 @@ func (sstore *SStore) OpenSegmentReader(filename string) (*SegmentReader, error)
 	return sstore.syncer.OpenSegmentReader(segment)
 }
 
-func (sstore *SStore) CreateSegment(filename string) (*SegmentWriter, error) {
+func (sstore *SStore) CreateSegmentWriter(filename string) (*SegmentWriter, error) {
 	segmentIndex, err := strconv.ParseInt(strings.Split(filename, ".")[0], 10, 64)
 	if err != nil {
 		return nil, err
@@ -209,7 +209,10 @@ func (sstore *SStore) CreateSegment(filename string) (*SegmentWriter, error) {
 			return os.Remove(filename)
 		},
 		commit: func() error {
-			return sstore.committer.AppendSegmentFile(filename)
+			if err := f.Close(); err != nil {
+				return err
+			}
+			return sstore.committer.SyncSegmentFile(filename)
 		},
 	}
 	return writer, nil

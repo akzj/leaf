@@ -14,10 +14,11 @@
 package sstore
 
 import (
-	block_queue "github.com/akzj/streamIO/pkg/block-queue"
+	"github.com/akzj/streamIO/pkg/block-queue"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/pkg/errors"
-	"log"
+	log "github.com/sirupsen/logrus"
+	"os"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -28,7 +29,7 @@ type committer struct {
 
 	maxMStreamTableSize int64
 	mutableMStreamMap   *mStreamTable
-	sizeMap             *int64LockMap
+	enpMap              *int64LockMap
 
 	immutableMStreamMaps          []*mStreamTable
 	maxImmutableMStreamTableCount int
@@ -66,7 +67,7 @@ func newCommitter(options Options,
 		queue:                         queue,
 		maxMStreamTableSize:           options.MaxMStreamTableSize,
 		mutableMStreamMap:             mutableMStreamMap,
-		sizeMap:                       sizeMap,
+		enpMap:                        sizeMap,
 		immutableMStreamMaps:          make([]*mStreamTable, 0, 32),
 		maxImmutableMStreamTableCount: options.MaxImmutableMStreamTableCount,
 		locker:                        new(sync.RWMutex),
@@ -93,7 +94,7 @@ func (c *committer) appendSegment(filename string, segment *segment) {
 	}
 }
 
-func (c *committer) getSegment2(index int64) *segment {
+func (c *committer) getSegmentByIndex(index int64, lockSync bool) *segment {
 	c.segmentsLocker.Lock()
 	defer c.segmentsLocker.Unlock()
 	var segments []*segment
@@ -112,9 +113,12 @@ func (c *committer) getSegment2(index int64) *segment {
 	i := sort.Search(len(segments), func(i int) bool {
 		return index <= segments[i].meta.From.Index
 	})
-	if i < len(segments) && segments[i].meta.From.Index == index {
+	if i < len(segments) {
 		segment := segments[i]
 		segment.refInc()
+		if lockSync {
+			segment.GetSyncLocker().Lock()
+		}
 		return segment
 	}
 	return nil
@@ -145,23 +149,6 @@ func (c *committer) deleteSegment(filename string) error {
 	return nil
 }
 
-func (c *committer) AppendSegmentFile(filename string) error {
-	if err := c.flushCallback(filename); err != nil {
-		return err
-	}
-	segment := c.getSegment(filename)
-	if segment == nil {
-		return errors.Errorf("no find segment %s", filename)
-	}
-	for streamID, info := range segment.meta.OffSetInfos {
-		item := notifyPool.Get().(*notify)
-		item.streamID = streamID
-		item.end = info.End
-		c.endWatchers.notify(item)
-	}
-	return nil
-}
-
 func (c *committer) flushCallback(filename string) error {
 	segment, err := openSegment(filename)
 	if err != nil {
@@ -188,21 +175,79 @@ func (c *committer) flushCallback(filename string) error {
 		return err
 	}
 	c.flushSegmentCallback(filename)
-	return err
+	return nil
+}
+
+//SyncSegmentFile receive segment file from master,and append segment to local sstore
+func (c *committer) SyncSegmentFile(filename string) error {
+	segment, err := openSegment(filename)
+	if err != nil {
+		return errors.WithStack(err)
+
+	}
+
+	//clear old segments
+	var segmentFiles = c.manifest.getSegmentFiles()
+	if len(segmentFiles) != 0 {
+		sort.Strings(segmentFiles)
+		lastSegmentIndex, err := parseFilenameIndex(segmentFiles[len(segmentFiles)-1])
+		if err != nil {
+			panic(err)
+		}
+		segmentIndex, err := parseFilenameIndex(filename)
+		if lastSegmentIndex != segmentIndex+1 {
+			for _, segmentFile := range segmentFiles {
+				if segment := c.getSegment(segmentFile); segment != nil {
+					segmentFilepath := filepath.Join(c.manifest.segmentDir, segmentFile)
+					segment.ref.f = func() {
+						if err := os.Remove(segmentFilepath); err != nil {
+							log.Error(err)
+						}
+					}
+					segment.refDec()
+					if err := c.deleteSegment(segmentFile); err != nil {
+						log.Error(err)
+					}
+				}
+			}
+		}
+	}
+
+	//update end map
+	for streamID, info := range segment.meta.OffSetInfos {
+		c.enpMap.set(streamID, info.End, segment.meta.To)
+	}
+
+	//clear memory table
+	c.mutableMStreamMap = newMStreamTable(c.enpMap, c.blockSize, len(segment.meta.OffSetInfos))
+
+	if err := c.flushCallback(filename); err != nil {
+		return err
+	}
+
+	for streamID, info := range segment.meta.OffSetInfos {
+		item := notifyPool.Get().(*notify)
+		item.streamID = streamID
+		item.end = info.End
+		c.endWatchers.notify(item)
+	}
+	return nil
 }
 
 func (c *committer) flush() {
 	mStreamMap := c.mutableMStreamMap
-	c.mutableMStreamMap = newMStreamTable(c.sizeMap, c.blockSize,
+	c.mutableMStreamMap = newMStreamTable(c.enpMap, c.blockSize,
 		len(c.mutableMStreamMap.mStreams))
 	c.locker.Lock()
 	c.immutableMStreamMaps = append(c.immutableMStreamMaps, mStreamMap)
 	c.locker.Unlock()
 	c.flusher.append(mStreamMap, func(filename string, err error) {
 		if err != nil {
-			log.Fatal(err.Error())
+			log.Fatal(err)
 		}
-		c.flushCallback(filename)
+		if err := c.flushCallback(filename); err != nil {
+			log.Fatal(err)
+		}
 	})
 }
 

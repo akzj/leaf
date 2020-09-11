@@ -22,7 +22,6 @@ import (
 	"github.com/pkg/errors"
 	"hash/crc32"
 	"io"
-	"log"
 	"math"
 	"os"
 	"sync"
@@ -30,11 +29,12 @@ import (
 
 type segment struct {
 	*ref
-	filename string
-	f        *os.File
-	meta     *pb.SegmentMeta
-	l        *sync.RWMutex
-	delete   bool
+	filename     string
+	f            *os.File
+	meta         *pb.SegmentMeta
+	l            *sync.RWMutex
+	syncerLocker *sync.Mutex
+	delete       bool
 }
 
 func newSegment() *segment {
@@ -48,13 +48,12 @@ func newSegment() *segment {
 			CreateTS:    0,
 			OffSetInfos: map[int64]*pb.OffsetInfo{},
 		},
-		l:      new(sync.RWMutex),
-		delete: false,
+		l:            new(sync.RWMutex),
+		syncerLocker: new(sync.Mutex),
+		delete:       false,
 	}
 	sm.ref = newRef(0, func() {
-		if err := sm.close(); err != nil {
-			log.Fatal(err.Error())
-		}
+		_ = sm.close()
 	})
 	return sm
 }
@@ -116,6 +115,11 @@ func openSegment(filename string) (*segment, error) {
 func (s *segment) FromVersion() *pb.Version {
 	return s.meta.From
 }
+
+func (s *segment) GetSyncLocker() *sync.Mutex {
+	return s.syncerLocker
+}
+
 func (s *segment) offsetInfo(streamID int64) (*pb.OffsetInfo, error) {
 	indexInfo, ok := s.meta.OffSetInfos[streamID]
 	if ok == false {

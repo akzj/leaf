@@ -9,6 +9,7 @@ import (
 	"github.com/pkg/errors"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 )
@@ -41,10 +42,9 @@ type journalIndex struct {
 }
 
 type SyncCallback struct {
-	Err     error
 	Segment *SegmentReader
-	entry   *pb.Entry
-	entries chan *pb.Entry
+	Entry   *pb.Entry
+	Entries chan *pb.Entry
 }
 
 func newSubscriber(index *int64) *subscriber {
@@ -95,7 +95,7 @@ func (syncer *Syncer) deleteSubscriber(serviceID int64) {
 }
 
 func (syncer *Syncer) syncJournal(ctx context.Context, index *int64,
-	journal *journal, f func(callback SyncCallback)) error {
+	journal *journal, f func(callback SyncCallback) error) error {
 
 	defer journal.refDec()
 	JI, err := journal.index.find(atomic.LoadInt64(index))
@@ -104,15 +104,17 @@ func (syncer *Syncer) syncJournal(ctx context.Context, index *int64,
 	}
 	file, err := os.Open(journal.filename)
 	if err != nil {
-		f(SyncCallback{Err: err})
 		return err
 	}
 	if _, err := file.Seek(JI.Offset, io.SeekStart); err != nil {
-		f(SyncCallback{Err: err})
 		return err
 	}
 	var entries = make(chan *pb.Entry)
-	go f(SyncCallback{entries: entries})
+	go func() {
+		if err := f(SyncCallback{Entries: entries}); err != nil {
+			fmt.Println(err)
+		}
+	}()
 	for {
 		entry, err := decodeEntry(bufio.NewReader(file))
 		if err != nil {
@@ -134,16 +136,20 @@ func (syncer *Syncer) syncJournal(ctx context.Context, index *int64,
 	}
 }
 
-func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f func(SyncCallback)) {
+func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f func(SyncCallback) error) error {
 	//sync from segment
-	segment := syncer.sstore.committer.getSegment2(index)
+	segment := syncer.sstore.committer.getSegmentByIndex(index, true)
 	if segment != nil {
+		defer func() {
+			segment.GetSyncLocker().Unlock()
+		}()
 		reader, err := syncer.OpenSegmentReader(segment)
-		f(SyncCallback{
-			Err:     err,
+		if err != nil {
+			return err
+		}
+		return f(SyncCallback{
 			Segment: reader,
 		})
-		return
 	}
 
 	defer func() {
@@ -164,7 +170,7 @@ func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f 
 		syncer.journalLocker.Unlock()
 		if journal != nil {
 			if err := syncer.syncJournal(ctx, &index, journal, f); err != nil {
-				return
+				return err
 			}
 		} else {
 			// sync from subscriber
@@ -183,13 +189,11 @@ func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f 
 					if entry.Ver.Index < atomic.LoadInt64(&index) {
 						continue
 					} else if entry.Ver.Index == atomic.LoadInt64(&index) {
-						f(SyncCallback{
-							Err:     nil,
+						return f(SyncCallback{
 							Segment: nil,
-							entry:   entry,
-							entries: sub.entries,
+							Entry:   entry,
+							Entries: sub.entries,
 						})
-						return
 					} else {
 						//read from journal again
 						break Loop
@@ -306,24 +310,35 @@ func (s *SegmentReader) Close() error {
 	s.release()
 	return err
 }
+func (s *SegmentReader) Filename() string {
+	return filepath.Base(s.f.Name())
+}
+func (s *SegmentReader) Size() int64 {
+	stat, _ := s.f.Stat()
+	return stat.Size()
+}
 
 type SegmentWriter struct {
+	offset  int64
 	f       *os.File
 	discard func() error
 	commit  func() error
 }
 
 func (s *SegmentWriter) Write(p []byte) (n int, err error) {
-	return s.f.Write(p)
+	n, err = s.f.Write(p)
+	s.offset += int64(n)
+	return
 }
 
-func (s *SegmentWriter) Close() error {
-	return s.f.Close()
-}
 func (s *SegmentWriter) Discard() error {
 	return s.discard()
 }
 
 func (s *SegmentWriter) Commit() error {
 	return s.commit()
+}
+
+func (s *SegmentWriter) Offset() int64 {
+	return s.offset
 }

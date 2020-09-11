@@ -18,21 +18,37 @@ func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncServi
 	if request.SyncSegmentRequest != nil {
 		return s.handleSyncSegmentRequest(request.SyncSegmentRequest, stream)
 	}
-	var err error
-	s.store.Sync(request.StreamServerId, request.Index, func(callback sstore.SyncCallback) {
-		if err != nil {
-			err = callback.Err
-			log.Errorf(err.Error())
-			return
-		}
+	return s.store.Sync(stream.Context(), request.StreamServerId, request.Index, func(callback sstore.SyncCallback) error {
 		if callback.Segment != nil {
-			err = s.syncSegment(0, callback.Segment, stream)
+			if err := stream.Send(&proto.SyncResponse{SegmentInfo: &proto.SegmentInfo{
+				Name: callback.Segment.Filename(),
+				Size: callback.Segment.Size(),
+			}}); err != nil {
+				log.Errorf("%+v\n", err)
+				return err
+			}
+			return s.syncSegmentData(0, callback.Segment, stream)
+		} else if callback.Entry != nil {
+			if err := stream.Send(&proto.SyncResponse{
+				Entry: callback.Entry,
+			}); err != nil {
+				log.Errorf(err.Error())
+				return err
+			}
+			for entry := range callback.Entries {
+				if err := stream.Send(&proto.SyncResponse{
+					Entry: entry,
+				}); err != nil {
+					log.Errorf(err.Error())
+					return err
+				}
+			}
 		}
+		return nil
 	})
-	return nil
 }
 
-func (s *Service) syncSegment(offset int64, segment *sstore.SegmentReader, stream proto.SyncService_SyncRequestServer) error {
+func (s *Service) syncSegmentData(offset int64, segment *sstore.SegmentReader, stream proto.SyncService_SyncRequestServer) error {
 	defer func() {
 		if err := segment.Close(); err != nil {
 			log.Errorf(err.Error())
@@ -85,5 +101,5 @@ func (s *Service) handleSyncSegmentRequest(request *proto.SyncSegmentRequest,
 		logEntry.Error(err)
 		return err
 	}
-	return s.syncSegment(request.Offset, segment, stream)
+	return s.syncSegmentData(request.Offset, segment, stream)
 }

@@ -45,7 +45,7 @@ func (sstore *SStore) clearJournal() error {
 		if header.Old && header.To.Index < FromVersion.Index {
 			//first delete from manifest
 			//and than delete from syncer
-			fmt.Println("delete",journalFile)
+			fmt.Println("delete", journalFile)
 			if err := sstore.manifest.deleteJournal(&pb.DeleteJournal{Filename: filename}); err != nil {
 				return err
 			}
@@ -69,13 +69,13 @@ func (sstore *SStore) clearSegment() error {
 		if segment == nil {
 			return errors.Errorf("no find segment[%s]", filename)
 		}
+		if err := sstore.manifest.deleteSegment(&pb.DeleteSegment{Filename: filename}); err != nil {
+			return err
+		}
 		if err := segment.deleteOnClose(true); err != nil {
 			return err
 		}
 		if err := sstore.committer.deleteSegment(filename); err != nil {
-			return err
-		}
-		if err := sstore.manifest.deleteSegment(&pb.DeleteSegment{Filename: filename}); err != nil {
 			return err
 		}
 		segment.refDec()

@@ -64,7 +64,7 @@ func (sStore *SStore) init() error {
 		manifest,
 		sStore.options.BlockSize, func(filename string) {
 			if err := sStore.clearJournal(); err != nil {
-
+				fmt.Println(err)
 			}
 		})
 	sStore.committer = committer
@@ -95,7 +95,6 @@ func (sStore *SStore) init() error {
 		sStore.version = segment.meta.To
 		sStore.committer.appendSegment(file, segment)
 	}
-
 	if sStore.version == nil {
 		sStore.version = &pb.Version{}
 	}
@@ -227,11 +226,11 @@ func listDir(dir string, ext string) ([]string, error) {
 		return nil
 	})
 }
-func diffStrings(first []string, second []string) []string {
+func diffStrings(all []string, sub []string) []string {
 	var diff []string
 Loop:
-	for _, it := range first {
-		for _, ij := range second {
+	for _, it := range all {
+		for _, ij := range sub {
 			if it == ij {
 				continue Loop
 			}
