@@ -18,7 +18,6 @@ import (
 	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
-	"os"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -135,6 +134,7 @@ func (c *committer) getSegment(filename string) *segment {
 }
 
 func (c *committer) deleteSegment(filename string) error {
+	filename = filepath.Base(filename)
 	c.segmentsLocker.Lock()
 	defer c.segmentsLocker.Unlock()
 	segment, ok := c.segments[filename]
@@ -178,12 +178,11 @@ func (c *committer) flushCallback(filename string) error {
 	return nil
 }
 
-//SyncSegmentFile receive segment file from master,and append segment to local sstore
-func (c *committer) SyncSegmentFile(filename string) error {
+//ReceiveSegmentFile receive segment file from master,and append segment to local sstore
+func (c *committer) ReceiveSegmentFile(filename string) error {
 	segment, err := openSegment(filename)
 	if err != nil {
 		return errors.WithStack(err)
-
 	}
 
 	//clear old segments
@@ -195,15 +194,10 @@ func (c *committer) SyncSegmentFile(filename string) error {
 			panic(err)
 		}
 		segmentIndex, err := parseFilenameIndex(filename)
-		if lastSegmentIndex != segmentIndex+1 {
+		if lastSegmentIndex != segmentIndex-1 {
 			for _, segmentFile := range segmentFiles {
 				if segment := c.getSegment(segmentFile); segment != nil {
-					segmentFilepath := filepath.Join(c.manifest.segmentDir, segmentFile)
-					segment.ref.f = func() {
-						if err := os.Remove(segmentFilepath); err != nil {
-							log.Error(err)
-						}
-					}
+					_ = segment.deleteOnClose(true)
 					segment.refDec()
 					if err := c.deleteSegment(segmentFile); err != nil {
 						log.Error(err)

@@ -16,6 +16,8 @@ syntax = "proto3";
 package proto;
 option go_package = "github.com/akzj/streamIO/proto;proto";
 
+import "google/protobuf/empty.proto";
+
 //stream operator
 
 message WriteStreamRequest{
@@ -56,8 +58,14 @@ message GetStreamStatResponse{
   int64 end = 3;
 }
 
+//SyncFromResponse make stream-server sync other stream-server,like master/slave
+message SyncFromRequest {
+  string addr = 1;
+}
+
 service stream_service{
   rpc WriteStream(stream WriteStreamRequest)returns(stream WriteStreamResponse){}
   rpc ReadStream(ReadStreamRequest)returns(stream ReadStreamResponse){}
   rpc GetStreamStat(GetStreamStatRequest)returns(GetStreamStatResponse){}
+  rpc StartSyncFrom(SyncFromRequest)returns (google.protobuf.Empty){}
 }

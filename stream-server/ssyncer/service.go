@@ -1,4 +1,4 @@
-package sync
+package ssyncer
 
 import (
 	"github.com/akzj/streamIO/pkg/sstore"
@@ -8,10 +8,16 @@ import (
 )
 
 /*
-sync stream from master
+ssyncer stream from master
 */
 type Service struct {
 	store *sstore.SStore
+}
+
+func NewService(store *sstore.SStore) *Service {
+	return &Service{
+		store: store,
+	}
 }
 
 func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncService_SyncRequestServer) error {

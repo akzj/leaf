@@ -1,4 +1,4 @@
-package sync
+package ssyncer
 
 import (
 	"context"
@@ -16,11 +16,20 @@ type Client struct {
 	cancel context.CancelFunc
 }
 
+func NewClient(store *sstore.SStore) *Client {
+	return &Client{
+		sstore: store,
+		ctx:    context.Background(),
+		cancel: func() {},
+	}
+}
+
 func (c *Client) Stop() {
 	c.cancel()
 }
 
-func (c *Client) StartSync(serviceAddr string) error {
+func (c *Client) Start(ctx context.Context, serviceAddr string) error {
+	c.ctx, c.cancel = context.WithCancel(ctx)
 	conn, err := grpc.DialContext(c.ctx, serviceAddr, grpc.WithInsecure())
 	if err != nil {
 		return errors.WithStack(err)
@@ -75,6 +84,12 @@ func (c *Client) StartSync(serviceAddr string) error {
 					return err
 				}
 				segmentWriter = nil
+			} else if response.Entry != nil {
+				c.sstore.AppendEntryWithCb(response.Entry, func(offset int64, err error) {
+					if err != nil {
+						log.Warn(err)
+					}
+				})
 			}
 		}
 	}

@@ -162,7 +162,7 @@ func (s *segment) flushMStreamTable(table *mStreamTable) error {
 	}
 	s.meta.From = table.from
 	s.meta.To = table.to
-	s.meta.CreateTS = table.GcTS.Unix()
+	s.meta.CreateTS = table.CreateTS.Unix()
 	data, err := proto.Marshal(s.meta)
 	if err != nil {
 		return err

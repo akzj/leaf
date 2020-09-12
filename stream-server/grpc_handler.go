@@ -17,6 +17,8 @@ import (
 	"context"
 	"github.com/akzj/streamIO/pkg/sstore"
 	"github.com/akzj/streamIO/proto"
+	"github.com/akzj/streamIO/stream-server/ssyncer"
+	"github.com/golang/protobuf/ptypes/empty"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -87,7 +89,7 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 	return requestError
 }
 
-func (server *StreamServer) GetStreamStat(ctx context.Context, request *proto.GetStreamStatRequest) (*proto.GetStreamStatResponse, error) {
+func (server *StreamServer) GetStreamStat(_ context.Context, request *proto.GetStreamStatRequest) (*proto.GetStreamStatResponse, error) {
 	stat, err := server.store.GetStreamStat(request.StreamID)
 	if err != nil {
 		log.Warningf("GetStreamStat(%d) failed %s", request.StreamID, err.Error())
@@ -96,4 +98,19 @@ func (server *StreamServer) GetStreamStat(ctx context.Context, request *proto.Ge
 	return &proto.GetStreamStatResponse{End: stat.End,
 		Begin:    stat.Begin,
 		StreamID: stat.StreamID}, nil
+}
+
+func (server *StreamServer) StartSyncFrom(_ context.Context, request *proto.SyncFromRequest) (*empty.Empty, error) {
+	server.syncClientLocker.Lock()
+	defer server.syncClientLocker.Unlock()
+	if server.syncClient != nil {
+		server.syncClient.Stop()
+	}
+	server.syncClient = ssyncer.NewClient(server.store.GetSStore())
+	go func() {
+		if err := server.syncClient.Start(server.ctx, request.Addr); err != nil {
+			log.Error(err)
+		}
+	}()
+	return &empty.Empty{}, nil
 }

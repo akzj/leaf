@@ -116,6 +116,18 @@ func (sstore *SStore) AsyncAppend(streamID int64, data []byte, offset int64, cb 
 	})
 }
 
+//AsyncAppend async append the data to end of the stream
+func (sstore *SStore) AppendEntryWithCb(entry *pb.Entry, cb func(offset int64, err error)) {
+	sstore.version = entry.Ver
+	sstore.entryQueue.Push(&writeRequest{
+		entry: entry,
+		close: false,
+		end:   0,
+		err:   nil,
+		cb:    cb,
+	})
+}
+
 //Reader create Reader of the stream
 func (sstore *SStore) Reader(streamID int64) (io.ReadSeeker, error) {
 	return sstore.indexTable.reader(streamID)
@@ -212,7 +224,7 @@ func (sstore *SStore) CreateSegmentWriter(filename string) (*SegmentWriter, erro
 			if err := f.Close(); err != nil {
 				return err
 			}
-			return sstore.committer.SyncSegmentFile(filename)
+			return sstore.committer.ReceiveSegmentFile(filename)
 		},
 	}
 	return writer, nil

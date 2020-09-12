@@ -137,7 +137,7 @@ func (syncer *Syncer) syncJournal(ctx context.Context, index *int64,
 }
 
 func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f func(SyncCallback) error) error {
-	//sync from segment
+	//ssyncer from segment
 	segment := syncer.sstore.committer.getSegmentByIndex(index, true)
 	if segment != nil {
 		defer func() {
@@ -156,7 +156,7 @@ func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f 
 		syncer.deleteSubscriber(serverID)
 	}()
 
-	//sync from journal
+	//ssyncer from journal
 
 	for {
 		var journal *journal
@@ -173,7 +173,7 @@ func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f 
 				return err
 			}
 		} else {
-			// sync from subscriber
+			// ssyncer from subscriber
 			syncer.subscribersLocker.Lock()
 			sub, ok := syncer.subscribers[serverID]
 			if ok == false {

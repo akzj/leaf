@@ -20,26 +20,27 @@ import (
 )
 
 type mStreamTable struct {
-	locker     sync.Mutex
-	mSize      int64
-	from       *pb.Version // first version
-	to         *pb.Version //last version, include
-	endMap     *int64LockMap
-	GcTS       time.Time
-	mStreams   map[int64]*mStream
-	indexTable *indexTable
-	blockSize  int
+	locker    sync.Mutex
+	mSize     int64
+	from      *pb.Version // first version
+	to        *pb.Version //last version, include
+	endMap    *int64LockMap
+	CreateTS  time.Time
+	mStreams  map[int64]*mStream
+	blockSize int
 }
 
 func newMStreamTable(sizeMap *int64LockMap,
 	blockSize int, mStreamMapSize int) *mStreamTable {
 	return &mStreamTable{
-		locker:     sync.Mutex{},
-		mSize:      0,
-		endMap:     sizeMap,
-		mStreams:   make(map[int64]*mStream, mStreamMapSize),
-		indexTable: nil,
-		blockSize:  blockSize,
+		locker:    sync.Mutex{},
+		mSize:     0,
+		from:      nil,
+		to:        nil,
+		endMap:    sizeMap,
+		CreateTS:  time.Now(),
+		mStreams:  make(map[int64]*mStream, mStreamMapSize),
+		blockSize: blockSize,
 	}
 }
 
