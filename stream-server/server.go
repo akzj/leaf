@@ -15,7 +15,6 @@ package stream_server
 
 import (
 	"context"
-	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/akzj/streamIO/proto"
 	"github.com/akzj/streamIO/stream-server/ssyncer"
 	"github.com/akzj/streamIO/stream-server/store"
@@ -50,6 +49,10 @@ type StreamServer struct {
 }
 
 func New(options Options) *StreamServer {
+	log.SetFormatter(&log.JSONFormatter{
+		PrettyPrint:       true,
+	})
+	log.WithField("options",options).Info("new stream")
 	_ = os.MkdirAll(filepath.Dir(options.LogPath), 0777)
 	file, err := os.OpenFile(options.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {

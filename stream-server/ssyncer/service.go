@@ -25,7 +25,7 @@ func NewService(store *sstore.SStore) *Service {
 func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncService_SyncRequestServer) error {
 	return s.store.Sync(stream.Context(), request.StreamServerId, request.Index, func(callback sstore.SyncCallback) error {
 		if callback.Segment != nil {
-			if err := stream.Send(&proto.SyncResponse{SegmentInfo: &proto.SegmentInfo{
+			if err := stream.Send(&proto.SyncResponse{SegmentInfo: &proto.SegmentBegin{
 				Name: callback.Segment.Filename(),
 				Size: callback.Segment.Size(),
 			}}); err != nil {
