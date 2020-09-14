@@ -25,6 +25,7 @@ import (
 	"github.com/rodaine/table"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
+	"google.golang.org/grpc"
 	"os"
 	"strconv"
 	"strings"
@@ -293,12 +294,28 @@ func mqttPub(brokerAddr string, topic string, clientID string, count int) error 
 	return nil
 }
 
+func getStreamServerStoreVersion(c *cli.Context) error {
+	metaServer := c.String("addr")
+	conn, err := grpc.DialContext(ctx, metaServer, grpc.WithInsecure())
+	if err != nil {
+		return err
+	}
+	client := proto.NewStreamServiceClient(conn)
+
+	version, err := client.GetStreamStoreVersion(ctx, &proto.GetStreamStoreVersionRequest{})
+	if err != nil {
+		return err
+	}
+	fmt.Println("term", version.Term, "index", version.Index)
+	return nil
+}
+
 func main() {
 	app := cli.App{
 		EnableBashCompletion: true,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
-				Name:    "ms",
+				Name:    "mss",
 				Aliases: []string{"m"},
 				Usage:   "meta-server-addr",
 				Value:   "127.0.0.1:5000",
@@ -306,20 +323,22 @@ func main() {
 		},
 		Commands: []*cli.Command{
 			{
-				Name:    "stream-server",
-				Aliases: []string{"s"},
-				Usage:   "stream-server operator",
+				Name:    "meta-server",
+				Aliases: []string{"ms"},
+				Usage:   "meta-server api",
 				Subcommands: []*cli.Command{
 					{
-						Name: "list",
+						Name:    "list_stream_server",
+						Usage:   "list stream-server info registering in meta-server",
+						Aliases: []string{"lss"},
 						Action: func(c *cli.Context) error {
 							return listStreamServer(c.String("ms"))
 						},
 					},
 					{
-						Name:    "add",
-						Aliases: []string{"a"},
-						Usage:   "add stream-server",
+						Name:    "add_stream_server",
+						Aliases: []string{"ass"},
+						Usage:   "register stream-server info to meta-server store",
 						Flags: []cli.Flag{
 							&cli.Int64Flag{
 								Name:     "id",
@@ -339,6 +358,27 @@ func main() {
 							id := c.Int64("id")
 							addr := c.String("addr")
 							return addStreamServer(metaServerAddr, id, addr)
+						},
+					},
+				},
+			},
+			{
+				Name:  "stream-server",
+				Usage: "stream-server api",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:  "addr",
+						Usage: "stream-server addr",
+						Value: "127.0.0.1:7000",
+					},
+				},
+				Subcommands: []*cli.Command{
+					{
+						Name:    "version",
+						Usage:   "get version of stream-server store",
+						Aliases: []string{"ver"},
+						Action: func(c *cli.Context) error {
+							return getStreamServerStoreVersion(c)
 						},
 					},
 				},
