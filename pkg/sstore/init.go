@@ -179,9 +179,9 @@ func (sStore *SStore) init() error {
 		}
 	}
 
-	sStore.wWriter = newWWriter(journal, sStore.entryQueue,
+	sStore.journalWriter = newJournalWriter(journal, sStore.entryQueue,
 		sStore.committer.queue, sStore.syncer, sStore.manifest, sStore.options.MaxJournalSize)
-	sStore.wWriter.start()
+	sStore.journalWriter.start()
 
 	//clear dead journal
 	journalFiles = manifest.getJournalFiles()

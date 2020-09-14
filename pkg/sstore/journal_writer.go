@@ -23,7 +23,7 @@ import (
 	"sync"
 )
 
-type wWriter struct {
+type journalWriter struct {
 	journal        *journal
 	queue          *block_queue.Queue
 	commitQueue    *block_queue.Queue
@@ -32,12 +32,12 @@ type wWriter struct {
 	maxJournalSize int64
 }
 
-func newWWriter(journal *journal,
+func newJournalWriter(journal *journal,
 	queue *block_queue.Queue,
 	commitQueue *block_queue.Queue,
 	syncer *Syncer,
-	files *manifest, maxWalSize int64) *wWriter {
-	return &wWriter{
+	files *manifest, maxWalSize int64) *journalWriter {
+	return &journalWriter{
 		journal:        journal,
 		queue:          queue,
 		commitQueue:    commitQueue,
@@ -48,16 +48,16 @@ func newWWriter(journal *journal,
 }
 
 //append the writeRequest to the queue of writer
-func (worker *wWriter) append(e *writeRequest) {
-	worker.queue.Push(e)
+func (jWriter *journalWriter) append(e *writeRequest) {
+	jWriter.queue.Push(e)
 }
 
-func (worker *wWriter) JournalFilename() string {
-	return filepath.Base(worker.journal.Filename())
+func (jWriter *journalWriter) JournalFilename() string {
+	return filepath.Base(jWriter.journal.Filename())
 }
 
-func (worker *wWriter) createNewJournal() error {
-	index, err := worker.manifest.geNextJournal()
+func (jWriter *journalWriter) createNewJournal() error {
+	index, err := jWriter.manifest.geNextJournal()
 	if err != nil {
 		return err
 	}
@@ -65,65 +65,65 @@ func (worker *wWriter) createNewJournal() error {
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	if err := worker.manifest.AppendJournal(&pb.AppendJournal{Filename: index}); err != nil {
+	if err := jWriter.manifest.AppendJournal(&pb.AppendJournal{Filename: index}); err != nil {
 		return err
 	}
-	if err := worker.journal.Close(); err != nil {
+	if err := jWriter.journal.Close(); err != nil {
 		return err
 	}
-	header := worker.journal.GetMeta()
+	header := jWriter.journal.GetMeta()
 	header.Old = true
-	if err := worker.manifest.setJournalHeader(header); err != nil {
+	if err := jWriter.manifest.setJournalHeader(header); err != nil {
 		return err
 	}
-	worker.journal = journal
-	worker.syncer.appendJournal(journal)
+	jWriter.journal = journal
+	jWriter.syncer.appendJournal(journal)
 	return nil
 }
 
 const closeSignal = math.MinInt64
 
-func (worker *wWriter) start() {
+func (jWriter *journalWriter) start() {
 	go func() {
 		for {
 			var writeRequests = objsPool.Get().([]interface{})[:0]
-			entries := worker.queue.PopAll(nil)
+			entries := jWriter.queue.PopAll(nil)
 			for i := range entries {
 				e := entries[i]
 				switch request := e.(type) {
 				case *writeRequest:
-					if worker.journal.Size() > worker.maxJournalSize {
-						if err := worker.createNewJournal(); err != nil {
+					if jWriter.journal.Size() > jWriter.maxJournalSize {
+						if err := jWriter.createNewJournal(); err != nil {
 							request.cb(-1, err)
 							continue
 						}
 					}
-					if err := worker.journal.Write(request); err != nil {
+					if err := jWriter.journal.Write(request); err != nil {
 						request.cb(-1, err)
 					} else {
 						writeRequests = append(writeRequests, request)
 					}
 				case *closeRequest:
-					_ = worker.journal.Close()
-					worker.commitQueue.Push(e)
+					_ = jWriter.journal.Close()
+					jWriter.commitQueue.Push(e)
 					return
 				}
 			}
 			if len(writeRequests) > 0 {
-				if err := worker.journal.Flush(); err != nil {
+				if err := jWriter.journal.Flush(); err != nil {
 					log.Fatal(err.Error())
 				}
-				worker.commitQueue.PushMany(writeRequests)
-				worker.syncer.PushMany(writeRequests)
+				jWriter.commitQueue.PushMany(writeRequests)
+				jWriter.syncer.PushMany(writeRequests)
 			}
 		}
 	}()
 }
 
-func (worker *wWriter) close() {
+func (jWriter *journalWriter) close() {
 	var wg sync.WaitGroup
 	wg.Add(1)
-	worker.queue.Push(&closeRequest{cb: func() {
+	jWriter.queue.Push(&closeRequest{cb: func() {
 		wg.Done()
 	}})
 	wg.Wait()

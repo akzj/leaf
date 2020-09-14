@@ -31,16 +31,16 @@ type SStore struct {
 	options    Options
 	entryQueue *block_queue.Queue
 
-	version     *pb.Version
-	notifyPool  sync.Pool
-	endMap      *int64LockMap
-	committer   *committer
-	indexTable  *indexTable
-	endWatchers *endWatchers
-	wWriter     *wWriter
-	manifest    *manifest
-	isClose     int32
-	syncer      *Syncer
+	version       *pb.Version
+	notifyPool    sync.Pool
+	endMap        *int64LockMap
+	committer     *committer
+	indexTable    *indexTable
+	endWatchers   *endWatchers
+	journalWriter *journalWriter
+	manifest      *manifest
+	isClose       int32
+	syncer        *Syncer
 }
 
 type Snapshot struct {
@@ -58,14 +58,14 @@ func Open(options Options) (*SStore, error) {
 				return make(chan interface{}, 1)
 			},
 		},
-		endMap:      newInt64LockMap(),
-		committer:   nil,
-		indexTable:  newIndexTable(),
-		endWatchers: newEndWatchers(),
-		wWriter:     nil,
-		manifest:    nil,
-		isClose:     0,
-		syncer:      nil,
+		endMap:        newInt64LockMap(),
+		committer:     nil,
+		indexTable:    newIndexTable(),
+		endWatchers:   newEndWatchers(),
+		journalWriter: nil,
+		manifest:      nil,
+		isClose:       0,
+		syncer:        nil,
 	}
 	if err := sstore.init(); err != nil {
 		return nil, err
@@ -174,7 +174,7 @@ func (sstore *SStore) Close() error {
 	if atomic.CompareAndSwapInt32(&sstore.isClose, 0, 1) == false {
 		return errors.New("repeated close")
 	}
-	sstore.wWriter.close()
+	sstore.journalWriter.close()
 	sstore.manifest.close()
 	sstore.endWatchers.close()
 	sstore.syncer.Close()
