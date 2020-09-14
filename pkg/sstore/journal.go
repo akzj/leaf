@@ -52,7 +52,8 @@ func openJournal(filename string) (*journal, error) {
 		meta: &pb.JournalMeta{
 			Old:      false,
 			Filename: filepath.Base(filename),
-			Version:  version1,
+			From:     &pb.Version{},
+			To:       &pb.Version{},
 		},
 		index: new(journalIndex),
 		ref: newRef(1, func() {
@@ -95,7 +96,7 @@ func (j *journal) Sync() error {
 
 func (j *journal) Write(e *writeRequest) error {
 	j.meta.To = e.entry.Ver
-	if j.meta.From == nil {
+	if j.meta.From.Index == 0 {
 		j.meta.From = e.entry.Ver
 	}
 	var offset = j.size
@@ -166,6 +167,10 @@ func (j *journal) RebuildIndex() error {
 	j.index = new(journalIndex)
 	var offset int64
 	return j.Read(func(e *writeRequest) error {
+		j.meta.To = e.entry.Ver
+		if j.meta.From.Index == 0 {
+			j.meta.From = e.entry.Ver
+		}
 		j.index.append(jIndex{
 			Offset: offset,
 			Index:  e.entry.Ver.Index,

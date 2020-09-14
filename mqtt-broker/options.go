@@ -40,9 +40,9 @@ func DefaultOptions() Options {
 	return Options{
 		MetaServerAddr:           "127.0.0.1:5000",
 		HOST:                     "0.0.0.0",
-		WSPort:                   9000,
+		WSPort:                   10000,
 		WSSPort:                  0,
-		BindPort:                 8000,
+		BindPort:                 12000,
 		BindTLSPort:              0,
 		DefaultKeepalive:         300,
 		MinKeepalive:             60,

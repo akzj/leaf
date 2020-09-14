@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"sync/atomic"
 )
@@ -34,6 +35,10 @@ type subscriber struct {
 type jIndex struct {
 	Offset int64
 	Index  int64
+}
+
+func (JI *jIndex) String() string {
+	return fmt.Sprintf("index:%d,offset:%d", JI.Index, JI.Offset)
 }
 
 type journalIndex struct {
@@ -69,6 +74,9 @@ func (syncer *Syncer) appendJournal(journal *journal) {
 	syncer.journalLocker.Lock()
 	defer syncer.journalLocker.Unlock()
 	syncer.journals = append(syncer.journals, journal)
+	sort.Slice(syncer.journals, func(i, j int) bool {
+		return syncer.journals[i].meta.From.Index < syncer.journals[j].meta.From.Index
+	})
 }
 
 func (syncer *Syncer) deleteJournal(filename string) {
@@ -106,27 +114,32 @@ func (syncer *Syncer) syncJournal(ctx context.Context, index *int64,
 	if err != nil {
 		return err
 	}
+	fmt.Println(JI.String())
 	if _, err := file.Seek(JI.Offset, io.SeekStart); err != nil {
 		return err
 	}
-	var entries = make(chan *pb.Entry)
+	var entries = make(chan *pb.Entry,100)
 	go func() {
 		if err := f(SyncCallback{Entries: entries}); err != nil {
 			fmt.Println(err)
 		}
 	}()
+	reader := bufio.NewReader(file)
 	for {
-		entry, err := decodeEntry(bufio.NewReader(file))
+		entry, err := decodeEntry(reader)
 		if err != nil {
 			fmt.Println(err.Error())
 			if err == io.EOF {
+				close(entries)
 				return nil
 			}
 			if err == io.ErrUnexpectedEOF {
+				close(entries)
 				return nil
 			}
 			return err
 		}
+		fmt.Println(entry.Ver)
 		select {
 		case entries <- entry:
 			atomic.AddInt64(index, 1)
@@ -162,9 +175,11 @@ func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f 
 		var journal *journal
 		syncer.journalLocker.Lock()
 		for _, journalIter := range syncer.journals {
-			if journalIter.meta.From.Index <= index && index <= journalIter.meta.To.Index {
+			fmt.Println(journalIter.meta)
+			if index <= journalIter.meta.To.Index {
 				journal = journalIter
 				journal.refInc()
+				break
 			}
 		}
 		syncer.journalLocker.Unlock()
@@ -186,9 +201,12 @@ func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f 
 			for {
 				select {
 				case entry := <-sub.entries:
+					fmt.Println(entry.Ver)
 					if entry.Ver.Index < atomic.LoadInt64(&index) {
+						fmt.Println("continue")
 						continue
 					} else if entry.Ver.Index == atomic.LoadInt64(&index) {
+						fmt.Println(entry.Ver)
 						return f(SyncCallback{
 							Segment: nil,
 							Entry:   entry,
@@ -196,6 +214,7 @@ func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f 
 						})
 					} else {
 						//read from journal again
+						fmt.Println("//read from journal again")
 						break Loop
 					}
 				}
@@ -215,10 +234,12 @@ func (syncer *Syncer) pushEntryLoop() {
 			syncer.subscribersLocker.Unlock()
 			continue
 		}
+		fmt.Println(len(items))
 		for _, item := range items {
 			for index, sub := range syncer.subscribers {
 				switch request := item.(type) {
 				case *writeRequest:
+					fmt.Println("request ver",request.entry.Ver)
 					nextIndex := atomic.LoadInt64(sub.nextIndex)
 					if nextIndex <= request.entry.Ver.Index {
 						select {
@@ -231,6 +252,7 @@ func (syncer *Syncer) pushEntryLoop() {
 				case *closeRequest:
 					request.cb()
 					fmt.Println("syncer stop")
+					syncer.subscribersLocker.Unlock()
 					return
 				}
 			}

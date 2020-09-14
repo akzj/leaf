@@ -134,6 +134,7 @@ func (sStore *SStore) init() error {
 
 	//create journal writer
 	var journal *journal
+	fmt.Println(journalFiles)
 	if len(journalFiles) > 0 {
 		journal, err = openJournal(filepath.Join(sStore.options.JournalDir, journalFiles[len(journalFiles)-1]))
 		if err != nil {
@@ -142,6 +143,7 @@ func (sStore *SStore) init() error {
 		if err := journal.RebuildIndex(); err != nil {
 			return err
 		}
+		fmt.Println("journal.RebuildIndex() done",journal.meta)
 	} else {
 		file, err := manifest.geNextJournal()
 		if err != nil {

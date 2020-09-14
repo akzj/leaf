@@ -50,9 +50,9 @@ type StreamServer struct {
 
 func New(options Options) *StreamServer {
 	log.SetFormatter(&log.JSONFormatter{
-		PrettyPrint:       true,
+		PrettyPrint: true,
 	})
-	log.WithField("options",options).Info("new stream")
+	log.WithField("options", options).Info("new stream")
 	_ = os.MkdirAll(filepath.Dir(options.LogPath), 0777)
 	file, err := os.OpenFile(options.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {
@@ -154,6 +154,11 @@ func (server *StreamServer) Start() error {
 			log.Fatalf(err.Error())
 		}
 	}()
+	if server.Options.SyncFrom != "" {
+		if _, err := server.StartSyncFrom(server.ctx, &proto.SyncFromRequest{Addr: server.SyncFrom}); err != nil {
+			panic(err)
+		}
+	}
 	if err := server.startStreamServer(); err != nil {
 		return err
 	}

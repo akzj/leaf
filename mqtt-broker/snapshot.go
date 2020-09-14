@@ -185,11 +185,14 @@ func (s *Snapshot) WriteSnapshot(header SnapshotHeader, topicTree *TopicTree, me
 	}
 
 	topicTree.RangeRetainMessage(func(packet *packets.PublishPacket) bool {
+		var message proto.RetainMessageEvent
 		var buffer bytes.Buffer
 		if err = packet.Write(&buffer); err != nil {
 			log.Fatal(err)
 		}
-		if err = writerEvent(&proto.Event{Data: buffer.Bytes(), Type: proto.Event_RetainMessageEvent}); err != nil {
+		message.Data = buffer.Bytes()
+		data, _ := pproto.Marshal(&message)
+		if err = writerEvent(&proto.Event{Data: data, Type: proto.Event_RetainMessageEvent}); err != nil {
 			log.Error(err.Error())
 			return false
 		}

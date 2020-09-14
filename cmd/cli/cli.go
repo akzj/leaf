@@ -332,7 +332,7 @@ func main() {
 						Usage:   "list stream-server info registering in meta-server",
 						Aliases: []string{"lss"},
 						Action: func(c *cli.Context) error {
-							return listStreamServer(c.String("ms"))
+							return listStreamServer(c.String("mss"))
 						},
 					},
 					{
@@ -389,8 +389,8 @@ func main() {
 				Flags: []cli.Flag{
 					&cli.StringFlag{
 						Name:  "broker",
-						Usage: "--broker [broker addr],eg : --broker tcp://127.0.0.1:8000",
-						Value: "ws://127.0.0.1:9000",
+						Usage: "--broker [broker addr],eg : --broker tcp://127.0.0.1:12000",
+						Value: "tcp://127.0.0.1:12000",
 					},
 					&cli.StringFlag{
 						Name:  "topic",

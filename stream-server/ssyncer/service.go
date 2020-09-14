@@ -65,19 +65,25 @@ func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncServi
 					return err
 				}
 			}
-		} else if callback.Entry != nil {
-			if err := stream.Send(&proto.SyncResponse{
-				Entry: callback.Entry,
-			}); err != nil {
-				log.Errorf(err.Error())
-				return err
-			}
-			for entry := range callback.Entries {
+		} else {
+			if callback.Entry != nil {
+				fmt.Println("callback entry", callback.Entry.Ver)
 				if err := stream.Send(&proto.SyncResponse{
-					Entry: entry,
+					Entry: callback.Entry,
 				}); err != nil {
 					log.Errorf(err.Error())
 					return err
+				}
+				callback.Entry = nil
+			}
+			if callback.Entries != nil {
+				for entry := range callback.Entries {
+					if err := stream.Send(&proto.SyncResponse{
+						Entry: entry,
+					}); err != nil {
+						log.Errorf(err.Error())
+						return err
+					}
 				}
 			}
 		}

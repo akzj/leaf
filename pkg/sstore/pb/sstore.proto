@@ -36,7 +36,6 @@ message SegmentMeta {
 message JournalMeta {
   bool Old = 1;
   string Filename = 2;
-  string Version = 3;
   Version From = 4;
   Version To = 5;
 }

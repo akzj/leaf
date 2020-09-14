@@ -47,7 +47,7 @@ func (c *Client) Start(ctx context.Context, localStreamServiceID int64, serviceA
 	for {
 		index := c.sstore.Version()
 		stream, err := cc.SyncRequest(c.ctx, &proto.SyncRequest{
-			Index:          index.Index,
+			Index:          index.Index + 1,
 			StreamServerId: localStreamServiceID,
 		})
 		if err != nil {
@@ -66,7 +66,7 @@ func (c *Client) Start(ctx context.Context, localStreamServiceID int64, serviceA
 			if err == io.EOF {
 				break
 			}
-			if err == nil {
+			if err != nil {
 				log.Error(err.Error())
 				break
 			}
@@ -106,6 +106,9 @@ func (c *Client) Start(ctx context.Context, localStreamServiceID int64, serviceA
 				}
 				segmentWriter = nil
 			} else if response.Entry != nil {
+				if response.Entry.Ver.Index %1000 == 0{
+					fmt.Println("response.Entry",response.Entry.Ver)
+				}
 				c.sstore.AppendEntryWithCb(response.Entry, func(offset int64, cbError error) {
 					if cbError != nil {
 						log.Warn(cbError)
