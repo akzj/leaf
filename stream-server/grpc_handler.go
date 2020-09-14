@@ -16,6 +16,7 @@ package stream_server
 import (
 	"context"
 	"github.com/akzj/streamIO/pkg/sstore"
+	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/akzj/streamIO/proto"
 	"github.com/akzj/streamIO/stream-server/ssyncer"
 	"github.com/golang/protobuf/ptypes/empty"
@@ -114,4 +115,8 @@ func (server *StreamServer) StartSyncFrom(_ context.Context, request *proto.Sync
 		}
 	}()
 	return &empty.Empty{}, nil
+}
+
+func (server *StreamServer) GetStreamStoreVersion(ctx context.Context, request *proto.GetStreamStoreVersionRequest) (*pb.Version, error) {
+	return server.store.GetSStore().Version(), nil
 }

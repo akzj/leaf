@@ -15,6 +15,7 @@ package stream_server
 
 import (
 	"context"
+	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/akzj/streamIO/proto"
 	"github.com/akzj/streamIO/stream-server/ssyncer"
 	"github.com/akzj/streamIO/stream-server/store"

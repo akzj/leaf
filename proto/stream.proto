@@ -17,6 +17,7 @@ package proto;
 option go_package = "github.com/akzj/streamIO/proto;proto";
 
 import "google/protobuf/empty.proto";
+import "streamIO/pkg/sstore/pb/sstore.proto";
 
 //stream operator
 
@@ -63,9 +64,14 @@ message SyncFromRequest {
   string addr = 1;
 }
 
+message GetStreamStoreVersionRequest{
+
+}
+
 service stream_service{
   rpc WriteStream(stream WriteStreamRequest)returns(stream WriteStreamResponse){}
   rpc ReadStream(ReadStreamRequest)returns(stream ReadStreamResponse){}
   rpc GetStreamStat(GetStreamStatRequest)returns(GetStreamStatResponse){}
   rpc StartSyncFrom(SyncFromRequest)returns (google.protobuf.Empty){}
+  rpc GetStreamStoreVersion(GetStreamStoreVersionRequest)returns (pb.Version){}
 }
