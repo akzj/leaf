@@ -108,8 +108,9 @@ func (server *StreamServer) StartSyncFrom(_ context.Context, request *proto.Sync
 	}
 	server.syncClient = ssyncer.NewClient(server.store.GetSStore())
 	go func() {
-		if err := server.syncClient.Start(server.ctx, request.Addr); err != nil {
+		if err := server.syncClient.Start(server.ctx, server.ServerID, request.Addr); err != nil {
 			log.Error(err)
+			server.syncStreamFailed(request.Addr, err)
 		}
 	}()
 	return &empty.Empty{}, nil

@@ -1,6 +1,8 @@
 package ssyncer
 
 import (
+	"crypto/md5"
+	"fmt"
 	"github.com/akzj/streamIO/pkg/sstore"
 	"github.com/akzj/streamIO/proto"
 	log "github.com/sirupsen/logrus"
@@ -21,9 +23,6 @@ func NewService(store *sstore.SStore) *Service {
 }
 
 func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncService_SyncRequestServer) error {
-	if request.SyncSegmentRequest != nil {
-		return s.handleSyncSegmentRequest(request.SyncSegmentRequest, stream)
-	}
 	return s.store.Sync(stream.Context(), request.StreamServerId, request.Index, func(callback sstore.SyncCallback) error {
 		if callback.Segment != nil {
 			if err := stream.Send(&proto.SyncResponse{SegmentInfo: &proto.SegmentInfo{
@@ -33,7 +32,39 @@ func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncServi
 				log.Errorf("%+v\n", err)
 				return err
 			}
-			return s.syncSegmentData(0, callback.Segment, stream)
+			buffer := make([]byte, 1024*128)
+			defer func() {
+				_ = callback.Segment.Close()
+			}()
+			hash := md5.New()
+			for {
+				n, err := callback.Segment.Read(buffer)
+				if err == io.EOF {
+
+					if err := stream.Send(&proto.SyncResponse{
+						SegmentEnd: &proto.SegmentEnd{
+							Md5Sum: fmt.Sprintf("%x", hash.Sum(nil)),
+						},
+					}); err != nil {
+						log.Error(err.Error())
+						return err
+					}
+					log.Infof("sync segment %s done", callback.Segment.Filename())
+					return nil
+				}
+				if err != nil {
+					log.Error(err.Error())
+					return err
+				}
+				hash.Write(buffer[:n])
+				err = stream.Send(&proto.SyncResponse{SegmentData: &proto.SegmentData{
+					Data: buffer[:n],
+				}})
+				if err != nil {
+					log.Error(err.Error())
+					return err
+				}
+			}
 		} else if callback.Entry != nil {
 			if err := stream.Send(&proto.SyncResponse{
 				Entry: callback.Entry,
@@ -52,60 +83,4 @@ func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncServi
 		}
 		return nil
 	})
-}
-
-func (s *Service) syncSegmentData(offset int64, segment *sstore.SegmentReader, stream proto.SyncService_SyncRequestServer) error {
-	defer func() {
-		if err := segment.Close(); err != nil {
-			log.Errorf(err.Error())
-		}
-	}()
-	buffer := make([]byte, 1024*128)
-	for {
-		n, err := segment.Read(buffer)
-		if err == io.EOF {
-			if err := stream.Send(&proto.SyncResponse{
-				SegmentInfo: nil,
-				SegmentData: nil,
-				SegmentEnd:  &proto.SegmentEnd{},
-			}); err != nil {
-				log.Error(err.Error())
-				return err
-			}
-			log.Info("start SyncSegment done")
-			return nil
-		}
-		if err != nil {
-			log.Error(err.Error())
-			return err
-		}
-		err = stream.Send(&proto.SyncResponse{SegmentData: &proto.SegmentData{
-			Offset: offset,
-			Data:   buffer[:n],
-		}})
-		if err != nil {
-			log.Error(err.Error())
-			return err
-		}
-		offset += int64(n)
-	}
-}
-
-func (s *Service) handleSyncSegmentRequest(request *proto.SyncSegmentRequest,
-	stream proto.SyncService_SyncRequestServer) error {
-
-	logEntry := log.WithField("segment", request.Name).
-		WithField("offset", request.Offset)
-	logEntry.Info("start SyncSegment")
-	segment, err := s.store.OpenSegmentReader(request.Name)
-	if err != nil {
-		logEntry.Error(err)
-		return err
-	}
-	if _, err := segment.Seek(request.Offset, io.SeekStart); err != nil {
-		_ = segment.Close()
-		logEntry.Error(err)
-		return err
-	}
-	return s.syncSegmentData(request.Offset, segment, stream)
 }

@@ -229,3 +229,7 @@ func (sstore *SStore) CreateSegmentWriter(filename string) (*SegmentWriter, erro
 	}
 	return writer, nil
 }
+
+func (sstore *SStore) Version() *pb.Version {
+	return sstore.version
+}

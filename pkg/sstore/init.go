@@ -62,11 +62,8 @@ func (sStore *SStore) init() error {
 		mStreamTable,
 		commitQueue,
 		manifest,
-		sStore.options.BlockSize, func(filename string) {
-			if err := sStore.clearJournal(); err != nil {
-				fmt.Println(err)
-			}
-		})
+		sStore.options.BlockSize,
+		sStore)
 	sStore.committer = committer
 	sStore.syncer = newSyncer(sStore)
 

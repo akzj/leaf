@@ -45,9 +45,9 @@ type committer struct {
 
 	blockSize int
 
-	cbWorker             *cbWorker
-	callbackQueue        *block_queue.Queue
-	flushSegmentCallback func(filename string)
+	cbWorker      *cbWorker
+	callbackQueue *block_queue.Queue
+	sstore        *SStore
 }
 
 func newCommitter(options Options,
@@ -58,7 +58,7 @@ func newCommitter(options Options,
 	queue *block_queue.Queue,
 	manifest *manifest,
 	blockSize int,
-	flushSegmentCallback func(filename string)) *committer {
+	sstore *SStore) *committer {
 
 	cbQueue := block_queue.NewQueue(128)
 
@@ -79,7 +79,7 @@ func newCommitter(options Options,
 		blockSize:                     blockSize,
 		cbWorker:                      newCbWorker(cbQueue),
 		callbackQueue:                 cbQueue,
-		flushSegmentCallback:          flushSegmentCallback,
+		sstore:                        sstore,
 	}
 }
 
@@ -172,9 +172,11 @@ func (c *committer) flushCallback(filename string) error {
 		}
 	}
 	if err := c.manifest.appendSegment(&pb.AppendSegment{Filename: filename}); err != nil {
-		return err
+		log.Fatalf(err.Error())
 	}
-	c.flushSegmentCallback(filename)
+	if err := c.sstore.clearJournal(); err != nil {
+		log.Fatalf(err.Error())
+	}
 	return nil
 }
 
@@ -214,6 +216,9 @@ func (c *committer) ReceiveSegmentFile(filename string) error {
 
 	//clear memory table
 	c.mutableMStreamMap = newMStreamTable(c.enpMap, c.blockSize, len(segment.meta.OffSetInfos))
+
+	//update version
+	c.sstore.version = segment.meta.To
 
 	if err := c.flushCallback(filename); err != nil {
 		return err

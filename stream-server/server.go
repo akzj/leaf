@@ -171,3 +171,6 @@ func (server *StreamServer) Stop(ctx context.Context) error {
 	}
 }
 
+func (server *StreamServer) syncStreamFailed(streamServerAddr string, err error) {
+	//todo notify to cluster manager for dispatching new stream master server to sync
+}
