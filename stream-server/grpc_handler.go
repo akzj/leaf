@@ -65,7 +65,7 @@ func (server *StreamServer) ReadStream(request *proto.ReadStreamRequest, stream 
 func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamServer) error {
 	var streamResults = make(chan *proto.WriteStreamResult, 64)
 	var ctx = stream.Context()
-	var results = make([]*proto.WriteStreamResult, 0, 10)
+	var results = make([]*proto.WriteStreamResult, 0, 64)
 	var pendingCh = make(chan struct{}, 1)
 	go func() {
 		for {
@@ -94,6 +94,7 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 				return
 			}
 			<-pendingCh
+			results = make([]*proto.WriteStreamResult, 0, 64)
 		}
 	}()
 	for {
@@ -126,7 +127,6 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 				}
 			})
 		}
-		//log.WithField("request", request).Info("WriteStream")
 	}
 }
 
