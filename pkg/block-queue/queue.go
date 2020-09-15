@@ -99,3 +99,17 @@ func (queue *Queue) PopAll(buf []interface{}) []interface{} {
 	queue.full.Signal()
 	return items
 }
+
+func (queue *Queue) PopAllWithoutBlock(buf []interface{}) []interface{} {
+	queue.locker.Lock()
+	if len(queue.items) == 0 {
+		queue.locker.Unlock()
+		return nil
+	}
+	items := queue.items
+	queue.items = buf[:0]
+	queue.pos = 0
+	queue.locker.Unlock()
+	queue.full.Signal()
+	return items
+}

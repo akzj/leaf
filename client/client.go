@@ -15,7 +15,7 @@ package client
 import (
 	"bytes"
 	"context"
-	block_queue "github.com/akzj/block-queue"
+	block_queue "github.com/akzj/streamIO/pkg/block-queue"
 	"github.com/akzj/streamIO/proto"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -113,9 +113,9 @@ func (c *client) NewStreamWriter(ctx context.Context, item proto.StreamInfoItem)
 	}
 	writeStreamRequests := c.startStreamRequestWriter(item.StreamServerId, streamServiceClient)
 	return &streamWriter{
-		locker:              sync.Mutex{},
-		buffer:              bytes.Buffer{},
-		writeStreamRequests: writeStreamRequests,
+		locker: sync.Mutex{},
+		buffer: bytes.Buffer{},
+		queue:  writeStreamRequests,
 	}, nil
 }
 
@@ -151,7 +151,7 @@ func (c *client) putSetReadOffsetRequest(request setReadOffsetRequest) {
 }
 
 func (c *client) startStreamRequestWriter(streamServerID int64,
-	streamServiceClient proto.StreamServiceClient) chan<- writeStreamRequest {
+	streamServiceClient proto.StreamServiceClient) *block_queue.Queue {
 	c.streamRequestWritersLocker.Lock()
 	defer c.streamRequestWritersLocker.Unlock()
 
@@ -161,7 +161,7 @@ func (c *client) startStreamRequestWriter(streamServerID int64,
 		c.streamRequestWriters[streamServerID] = writer
 		go writer.writeLoop()
 	}
-	return writer.requests
+	return writer.requestQueue
 }
 
 func (c *client) processSetReadOffsetRequestLoop() {
@@ -406,10 +406,10 @@ func (s *session) NewWriter() (StreamWriter, error) {
 	}
 	writeStreamRequests := s.client.startStreamRequestWriter(s.streamInfo.StreamServerId, streamServiceClient)
 	return &streamWriter{
-		locker:              sync.Mutex{},
-		streamInfo:          s.streamInfo,
-		buffer:              bytes.Buffer{},
-		writeStreamRequests: writeStreamRequests,
+		locker:     sync.Mutex{},
+		streamInfo: s.streamInfo,
+		buffer:     bytes.Buffer{},
+		queue:      writeStreamRequests,
 	}, nil
 }
 

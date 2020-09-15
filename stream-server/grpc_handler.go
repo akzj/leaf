@@ -66,7 +66,6 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 	var streamResults = make(chan *proto.WriteStreamResult, 64)
 	var ctx = stream.Context()
 	var results = make([]*proto.WriteStreamResult, 0, 64)
-	var pendingCh = make(chan struct{}, 1)
 	go func() {
 		for {
 			select {
@@ -83,7 +82,7 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 				case <-ctx.Done():
 					log.Error(ctx.Err())
 					return
-				case pendingCh <- struct{}{}:
+				default:
 					goto responseResult
 				}
 			}
@@ -93,7 +92,6 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 				log.Error(err)
 				return
 			}
-			<-pendingCh
 			results = make([]*proto.WriteStreamResult, 0, 64)
 		}
 	}()

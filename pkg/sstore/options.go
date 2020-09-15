@@ -43,7 +43,7 @@ func DefaultOptions(Path string) Options {
 		MaxSegmentCount:               math.MaxInt32,
 		BlockSize:                     4 * KB,
 		MaxMStreamTableSize:           256 * MB,
-		MaxImmutableMStreamTableCount: 4,
+		MaxImmutableMStreamTableCount: 2,
 		RequestQueueCap:               128,
 		MaxJournalSize:                128 * MB,
 	}

@@ -16,6 +16,7 @@ package client
 import (
 	"bytes"
 	"context"
+	block_queue "github.com/akzj/streamIO/pkg/block-queue"
 	"github.com/akzj/streamIO/proto"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -28,8 +29,8 @@ type streamRequestWriter struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	requestId int64
-	requests  chan writeStreamRequest
+	requestId    int64
+	requestQueue *block_queue.Queue
 }
 
 type writeStreamRequest struct {
@@ -39,14 +40,18 @@ type writeStreamRequest struct {
 	callback  func(err error)
 }
 
+type closeNotify struct {
+	done func()
+}
+
 func newWriteStreamRequest(ctx context.Context, client proto.StreamServiceClient) *streamRequestWriter {
 	ctx, cancel := context.WithCancel(ctx)
 	return &streamRequestWriter{
-		client:    client,
-		ctx:       ctx,
-		cancel:    cancel,
-		requestId: 0,
-		requests:  make(chan writeStreamRequest, 128),
+		client:       client,
+		ctx:          ctx,
+		cancel:       cancel,
+		requestId:    0,
+		requestQueue: block_queue.NewQueue(1024),
 	}
 }
 
@@ -62,9 +67,17 @@ func (writer *streamRequestWriter) writeLoop() {
 			log.Errorf(err.Error())
 		Loop:
 			for {
+				request := writer.requestQueue.PopAllWithoutBlock(nil)
+				for _, it := range request {
+					switch item := it.(type) {
+					case writeStreamRequest:
+						item.callback(err)
+					case closeNotify:
+						item.done()
+						return
+					}
+				}
 				select {
-				case request := <-writer.requests:
-					request.callback(err)
 				case <-time.After(time.Second):
 					break Loop
 				case <-writer.ctx.Done():
@@ -107,7 +120,6 @@ func (writer *streamRequestWriter) writeLoop() {
 			}
 		}()
 		var entries = make([]*proto.WriteStreamEntry, 0, 64)
-		var pendingCh = make(chan struct{}, 1)
 		var size int
 		appendEntries := func(request writeStreamRequest) {
 			request.requestID = writer.getRequestID()
@@ -124,59 +136,61 @@ func (writer *streamRequestWriter) writeLoop() {
 		}
 	writeLoop:
 		for {
-			select {
-			case request := <-writer.requests:
-				appendEntries(request)
-			case <-writer.ctx.Done():
-				log.Error(writer.ctx.Err())
-				break writeLoop
-			}
-
-		Loop2:
-			for {
-				select {
-				case request := <-writer.requests:
+			items := writer.requestQueue.PopAll(make([]interface{}, 0, 128))
+			for _, it := range items {
+				switch request := it.(type) {
+				case writeStreamRequest:
 					appendEntries(request)
 					if size >= 1024*1024 || len(entries) >= 256 {
-						pendingCh <- struct{}{}
-						goto writeRequest
+						break
 					}
-				case <-writer.ctx.Done():
-					log.Error(writer.ctx.Err())
-					break Loop2
-				case pendingCh <- struct{}{}:
-					goto writeRequest
+					continue
+				case closeNotify:
+					request.done()
+					return
 				}
+				if err := stream.Send(&proto.WriteStreamRequest{Entries: entries}); err != nil {
+					break writeLoop
+				}
+				entries = make([]*proto.WriteStreamEntry, 0, 64)
+				size = 0
 			}
-		writeRequest:
-			if err := stream.Send(&proto.WriteStreamRequest{Entries: entries}); err != nil {
-				break writeLoop
+			if len(entries) != 0 {
+				if err := stream.Send(&proto.WriteStreamRequest{Entries: entries}); err != nil {
+					break writeLoop
+				}
+				entries = make([]*proto.WriteStreamEntry, 0, 64)
+				size = 0
 			}
-			<-pendingCh
-			size = 0
-			entries = make([]*proto.WriteStreamEntry, 0, 64)
 		}
 	}
 }
 
 func (writer *streamRequestWriter) Close() error {
-	close(writer.requests)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	writer.requestQueue.Push(closeNotify{
+		done: func() {
+			wg.Done()
+		},
+	})
+	wg.Wait()
 	return nil
 }
 
 type streamWriter struct {
-	locker              sync.Mutex
-	streamInfo          *proto.StreamInfoItem
-	buffer              bytes.Buffer
-	writeStreamRequests chan<- writeStreamRequest
+	locker     sync.Mutex
+	streamInfo *proto.StreamInfoItem
+	buffer     bytes.Buffer
+	queue      *block_queue.Queue
 }
 
 func (s *streamWriter) WriteWithCb(data []byte, callback func(err error)) {
-	s.writeStreamRequests <- writeStreamRequest{
+	s.queue.Push(writeStreamRequest{
 		data:     data,
 		streamID: s.streamInfo.StreamId,
 		callback: callback,
-	}
+	})
 }
 
 func (s *streamWriter) StreamID() int64 {
