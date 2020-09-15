@@ -63,20 +63,37 @@ func (server *StreamServer) ReadStream(request *proto.ReadStreamRequest, stream 
 }
 
 func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamServer) error {
-	var responseCh = make(chan *proto.WriteStreamResponse, 64)
+	var streamResults = make(chan *proto.WriteStreamResult, 64)
 	var ctx = stream.Context()
+	var results = make([]*proto.WriteStreamResult, 0, 10)
+	var pendingCh = make(chan struct{}, 1)
 	go func() {
 		for {
 			select {
-			case response := <-responseCh:
-				if err := stream.Send(response); err != nil {
-					log.Error(err)
-					return
-				}
+			case result := <-streamResults:
+				results = append(results, result)
 			case <-ctx.Done():
 				log.Error(ctx.Err())
 				return
 			}
+			for {
+				select {
+				case result := <-streamResults:
+					results = append(results, result)
+				case <-ctx.Done():
+					log.Error(ctx.Err())
+					return
+				case pendingCh <- struct{}{}:
+					goto responseResult
+				}
+			}
+
+		responseResult:
+			if err := stream.Send(&proto.WriteStreamResponse{Results: results}); err != nil {
+				log.Error(err)
+				return
+			}
+			<-pendingCh
 		}
 	}()
 	for {
@@ -89,23 +106,27 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 			log.Warn(err)
 			return err
 		}
+
+		for _, entry := range request.Entries {
+			entry := entry
+			server.store.WriteRequest(entry, func(offset int64, writerErr error) {
+				atomic.AddInt64(&server.count, 1)
+				result := &proto.WriteStreamResult{
+					Offset:    offset,
+					StreamId:  entry.StreamId,
+					RequestId: entry.RequestId,
+				}
+				if writerErr != nil {
+					result.Err = writerErr.Error()
+				}
+				select {
+				case streamResults <- result:
+				case <-ctx.Done():
+					log.Error(ctx.Err())
+				}
+			})
+		}
 		//log.WithField("request", request).Info("WriteStream")
-		server.store.WriteRequest(request, func(offset int64, writerErr error) {
-			atomic.AddInt64(&server.count, 1)
-			response := &proto.WriteStreamResponse{
-				StreamId:  request.StreamId,
-				Offset:    offset,
-				RequestId: request.RequestId,
-			}
-			if writerErr != nil {
-				response.Err = writerErr.Error()
-			}
-			select {
-			case responseCh <- response:
-			case <-ctx.Done():
-				log.Error(ctx.Err())
-			}
-		})
 	}
 }
 

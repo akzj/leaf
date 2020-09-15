@@ -35,8 +35,6 @@ type StreamReader interface {
 }
 
 type StreamWriter interface {
-	io.WriteCloser
-	Flush() error
 	WriteWithCb(data []byte, callback func(err error))
 	StreamID() int64
 }

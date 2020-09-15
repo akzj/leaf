@@ -21,18 +21,25 @@ import "streamIO/pkg/sstore/pb/sstore.proto";
 
 //stream operator
 
-message WriteStreamRequest{
+message WriteStreamEntry{
   int64 stream_id = 1;
   int64 offset = 2;
   bytes data = 3;
   int64 request_id = 4;
 }
-
-message WriteStreamResponse{
+message WriteStreamResult{
   int64 stream_id = 1;
   int64 offset = 2;
   int64 request_id = 3;
   string err = 4;
+}
+
+message WriteStreamRequest{
+  repeated WriteStreamEntry entries = 1;
+}
+
+message WriteStreamResponse{
+  repeated WriteStreamResult results = 1;
 }
 
 message ReadStreamRequest {
@@ -64,9 +71,7 @@ message SyncFromRequest {
   string addr = 1;
 }
 
-message GetStreamStoreVersionRequest{
-
-}
+message GetStreamStoreVersionRequest{}
 
 service stream_service{
   rpc WriteStream(stream WriteStreamRequest)returns(stream WriteStreamResponse){}

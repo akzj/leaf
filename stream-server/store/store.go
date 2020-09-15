@@ -48,7 +48,7 @@ func (store *Store) GetSStore() *sstore.SStore {
 	return store.sstore
 }
 
-func (store *Store) WriteRequest(request *proto.WriteStreamRequest, callback func(offset int64, err error)) {
+func (store *Store) WriteRequest(request *proto.WriteStreamEntry, callback func(offset int64, err error)) {
 	store.sstore.AsyncAppend(request.StreamId, request.Data, request.Offset, callback)
 }
 

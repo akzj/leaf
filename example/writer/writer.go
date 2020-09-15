@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/akzj/streamIO/client"
+	"sync"
 	"time"
 )
 
@@ -38,12 +39,13 @@ func main() {
 		panic(err.Error())
 	}
 
-	n, err := writer.Write([]byte("hello world"))
-	if err != nil {
-		panic(err.Error())
-	}
-	if err := writer.Flush(); err != nil {
-		panic(err.Error())
-	}
-	fmt.Println(n)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	writer.WriteWithCb([]byte("hello world"), func(err error) {
+		wg.Done()
+		if err != nil {
+			panic(err.Error())
+		}
+	})
+	wg.Wait()
 }

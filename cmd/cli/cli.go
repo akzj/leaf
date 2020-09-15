@@ -29,6 +29,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -115,29 +116,24 @@ func writeStream(metaServer string, streamName string, data string, count int64)
 	}
 	go func() {
 		time.Sleep(time.Second * 3)
-		fmt.Println(writer.Close())
 	}()
 	var size int
 	hash := md5.New()
+	var wg sync.WaitGroup
 	for count := count; count > 0; count-- {
+		wg.Add(1)
 		buffer := data + strconv.Itoa(int(count)) + "\n"
-		n, err := writer.Write([]byte(buffer))
-		if err != nil {
-			panic(err.Error())
-		}
-		if n != len(buffer) {
-			panic("write error")
-		}
-		if err := writer.Flush(); err != nil {
-			log.Error(err.Error())
-		}
-		size += n
+		writer.WriteWithCb([]byte(buffer), func(err error) {
+			wg.Done()
+			if err != nil {
+				panic(err.Error())
+			}
+		})
 		hash.Write([]byte(buffer))
 	}
-	if err := writer.Flush(); err != nil {
-		log.Error(err)
-		return nil
-	}
+
+	wg.Wait()
+
 	fmt.Printf("write stream [%s] count [%d]  size [%d] md5[%x]\n", streamName, count, size, hash.Sum(nil))
 	return nil
 }
