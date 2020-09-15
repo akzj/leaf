@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -45,7 +46,7 @@ func TestRecover(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		sstore, err := Open(DefaultOptions("data").WithMaxMStreamTableSize(10 * MB))
 		if err != nil {
-			t.Fatalf("%+v",err)
+			t.Fatalf("%+v", err)
 		}
 		var streamID = int64(1)
 		var data = strings.Repeat("hello world,", 10)
@@ -163,12 +164,12 @@ func TestReader(t *testing.T) {
 		t.Fatalf("%d %+v", n, err)
 	}
 	if n != len(buffer) {
-		t.Fatal(n,len(buffer))
+		t.Fatal(n, len(buffer))
 	}
 	crc32W := crc32.NewIEEE()
 	crc32W.Write(buffer)
 	if crc32W.Sum32() != sum32 {
-//		t.Fatal(sum32)
+		//		t.Fatal(sum32)
 	}
 
 	reader, _ = sstore.Reader(streamID)
@@ -180,7 +181,7 @@ func TestReader(t *testing.T) {
 	crc32W = crc32.NewIEEE()
 	crc32W.Write(readAllData)
 	if crc32W.Sum32() != sum32 {
-//		t.Fatal(sum32)
+		//		t.Fatal(sum32)
 	}
 
 	sstore.Close()
@@ -251,7 +252,7 @@ func TestSStore_Watcher(t *testing.T) {
 func TestSStore_AppendMultiStream(t *testing.T) {
 	//os.RemoveAll("data")
 	//defer os.RemoveAll("data")
-	sstore, err := Open(DefaultOptions("data").WithMaxMStreamTableSize(16 * MB).WithMaxWalSize(15*MB))
+	sstore, err := Open(DefaultOptions("data").WithMaxMStreamTableSize(16 * MB).WithMaxWalSize(15 * MB))
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -324,5 +325,46 @@ func TestSStore_GC(t *testing.T) {
 	}
 }
 
+func TestAsyncAppend(t *testing.T) {
+	os.RemoveAll("data")
+	defer os.RemoveAll("data")
+	sstore, err := Open(DefaultOptions("data").
+		WithMaxMStreamTableSize(256 * MB).
+		WithMaxWalSize(256*MB))
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	var data = make([]byte,64)
+	var wg sync.WaitGroup
+	var count int64
+	go func() {
+		lCount := count
+		for {
+			tCount := count
+			fmt.Println(tCount - lCount)
+			lCount = tCount
+			time.Sleep(time.Second)
+		}
+	}()
+	for i := 0; i < 10000000; i++ {
+		for i2 := 0; i2 < 100000; i2++ {
+			wg.Add(1)
+			sstore.AsyncAppend(int64(i2), data, -1, func(offset int64, err error) {
+				if err != nil {
+					t.Fatalf("%+v", err)
+				}
+				atomic.AddInt64(&count, 1)
+				wg.Done()
+			})
+		}
+	}
+	wg.Wait()
 
+	if err := sstore.GC(); err != nil {
+		t.Fatalf("%+v", err)
+	}
 
+	if len(sstore.manifest.getSegmentFiles()) == 5 {
+		t.Fatalf("")
+	}
+}
