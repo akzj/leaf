@@ -4,9 +4,11 @@ import (
 	"crypto/md5"
 	"fmt"
 	"github.com/akzj/streamIO/pkg/sstore"
+	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/akzj/streamIO/proto"
 	log "github.com/sirupsen/logrus"
 	"io"
+	"time"
 )
 
 /*
@@ -69,7 +71,7 @@ func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncServi
 			if callback.Entry != nil {
 				fmt.Println("callback entry", callback.Entry.Ver)
 				if err := stream.Send(&proto.SyncResponse{
-					Entry: callback.Entry,
+					Entries: []*pb.Entry{callback.Entry},
 				}); err != nil {
 					log.Errorf(err.Error())
 					return err
@@ -77,12 +79,47 @@ func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncServi
 				callback.Entry = nil
 			}
 			if callback.Entries != nil {
-				for entry := range callback.Entries {
-					if err := stream.Send(&proto.SyncResponse{
-						Entry: entry,
-					}); err != nil {
-						log.Errorf(err.Error())
-						return err
+				tick := time.NewTicker(time.Millisecond * 10)
+				defer tick.Stop()
+				var end = false
+				for !end {
+					var size int
+					var response = proto.SyncResponse{Entries: make([]*pb.Entry, 0, 64)}
+					select {
+					case entry := <-callback.Entries:
+						if entry == nil {
+							return nil //
+						}
+						response.Entries = append(response.Entries, entry)
+						size += len(entry.Data) + 32
+					}
+					begin := time.Now()
+					for {
+						select {
+						case entry := <-callback.Entries:
+							if entry == nil {
+								end = true
+								goto responseEntry
+							}
+							response.Entries = append(response.Entries, entry)
+							size += len(entry.Data) + 32
+							if size > 1024*1024 {
+								goto responseEntry
+							}
+						case ts := <-tick.C:
+							if begin.Sub(ts) > time.Millisecond*10 {
+								goto responseEntry
+							}
+						}
+					}
+
+				responseEntry:
+					if len(response.Entries) != 0 {
+						fmt.Println("entries", len(response.Entries))
+						if err := stream.Send(&response); err != nil {
+							log.Errorf(err.Error())
+							return err
+						}
 					}
 				}
 			}

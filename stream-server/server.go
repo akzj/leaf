@@ -46,6 +46,8 @@ type StreamServer struct {
 
 	syncClientLocker sync.Mutex
 	syncClient       *ssyncer.Client
+
+	count int64
 }
 
 func New(options Options) *StreamServer {
@@ -123,6 +125,7 @@ func (server *StreamServer) startStreamServer() error {
 		log.Error(err)
 		return err
 	}
+	go server.printMsgCount()
 	if err := server.streamGrpcServer.Serve(listener); err != nil {
 		log.Error(err)
 		return err

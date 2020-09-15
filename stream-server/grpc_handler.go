@@ -15,6 +15,7 @@ package stream_server
 
 import (
 	"context"
+	"fmt"
 	"github.com/akzj/streamIO/pkg/sstore"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/akzj/streamIO/proto"
@@ -25,6 +26,8 @@ import (
 	"google.golang.org/grpc/status"
 	"io"
 	"strings"
+	"sync/atomic"
+	"time"
 )
 
 func (server *StreamServer) ReadStream(request *proto.ReadStreamRequest, stream proto.StreamService_ReadStreamServer) error {
@@ -60,8 +63,23 @@ func (server *StreamServer) ReadStream(request *proto.ReadStreamRequest, stream 
 }
 
 func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamServer) error {
-	var requestError error
-	for requestError == nil {
+	var responseCh = make(chan *proto.WriteStreamResponse, 64)
+	var ctx = stream.Context()
+	go func() {
+		for {
+			select {
+			case response := <-responseCh:
+				if err := stream.Send(response); err != nil {
+					log.Error(err)
+					return
+				}
+			case <-ctx.Done():
+				log.Error(ctx.Err())
+				return
+			}
+		}
+	}()
+	for {
 		request, err := stream.Recv()
 		if err == io.EOF {
 			log.Warn(err)
@@ -73,6 +91,7 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 		}
 		//log.WithField("request", request).Info("WriteStream")
 		server.store.WriteRequest(request, func(offset int64, writerErr error) {
+			atomic.AddInt64(&server.count, 1)
 			response := &proto.WriteStreamResponse{
 				StreamId:  request.StreamId,
 				Offset:    offset,
@@ -81,13 +100,23 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 			if writerErr != nil {
 				response.Err = writerErr.Error()
 			}
-			if err = stream.Send(response); err != nil {
-				log.Warn(err)
-				requestError = err
+			select {
+			case responseCh <- response:
+			case <-ctx.Done():
+				log.Error(ctx.Err())
 			}
 		})
 	}
-	return requestError
+}
+
+func (server *StreamServer) printMsgCount() {
+	var lastCount int64
+	for {
+		time.Sleep(time.Second)
+		msgCount := atomic.LoadInt64(&server.count)
+		fmt.Println(msgCount - lastCount)
+		lastCount = msgCount
+	}
 }
 
 func (server *StreamServer) GetStreamStat(_ context.Context, request *proto.GetStreamStatRequest) (*proto.GetStreamStatResponse, error) {

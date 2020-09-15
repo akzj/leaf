@@ -10,6 +10,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"io"
+	"sync/atomic"
 	"time"
 )
 
@@ -61,6 +62,18 @@ func (c *Client) Start(ctx context.Context, localStreamServiceID int64, serviceA
 		hash := md5.New()
 		var segmentName string
 		var appendEntryError bool
+		var count int64
+		var lCount int64
+		go func() {
+			for {
+				temp := atomic.LoadInt64(&count)
+				if msg := (temp - lCount) * 10; msg > 0 {
+					fmt.Println("msg/second", msg)
+				}
+				lCount = temp
+				time.Sleep(time.Millisecond * 100)
+			}
+		}()
 		for !appendEntryError {
 			response, err := stream.Recv()
 			if err == io.EOF {
@@ -105,16 +118,17 @@ func (c *Client) Start(ctx context.Context, localStreamServiceID int64, serviceA
 					return err
 				}
 				segmentWriter = nil
-			} else if response.Entry != nil {
-				if response.Entry.Ver.Index %1000 == 0{
-					fmt.Println("response.Entry",response.Entry.Ver)
+			} else if response.Entries != nil {
+				for _, entry := range response.Entries {
+					atomic.AddInt64(&count, 1)
+					//fmt.Println(entry.Ver)
+					c.sstore.AppendEntryWithCb(entry, func(offset int64, cbError error) {
+						if cbError != nil {
+							log.Warn(cbError)
+							appendEntryError = true
+						}
+					})
 				}
-				c.sstore.AppendEntryWithCb(response.Entry, func(offset int64, cbError error) {
-					if cbError != nil {
-						log.Warn(cbError)
-						appendEntryError = true
-					}
-				})
 			}
 		}
 	}

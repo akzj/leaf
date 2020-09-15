@@ -354,7 +354,7 @@ func main() {
 							},
 						},
 						Action: func(c *cli.Context) error {
-							metaServerAddr := c.String("ms")
+							metaServerAddr := c.String("mss")
 							id := c.Int64("id")
 							addr := c.String("addr")
 							return addStreamServer(metaServerAddr, id, addr)
@@ -452,7 +452,7 @@ func main() {
 							},
 						},
 						Action: func(c *cli.Context) error {
-							return writeStream(c.String("ms"),
+							return writeStream(c.String("mss"),
 								c.String("name"),
 								c.String("data"),
 								c.Int64("count"))
@@ -482,7 +482,7 @@ func main() {
 							},
 						},
 						Action: func(c *cli.Context) error {
-							return readStream(c.String("ms"),
+							return readStream(c.String("mss"),
 								c.String("name"),
 								c.Int64("session_id"),
 								c.Int64("size"),
@@ -499,7 +499,7 @@ func main() {
 							},
 						},
 						Action: func(c *cli.Context) error {
-							return getStreamStat(c.String("ms"), c.String("name"))
+							return getStreamStat(c.String("mss"), c.String("name"))
 						},
 					},
 				},
