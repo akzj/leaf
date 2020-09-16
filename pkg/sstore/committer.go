@@ -262,7 +262,7 @@ func (c *committer) start() {
 				case *closeRequest:
 					c.flusher.close()
 					c.callbackQueue.Push(request)
-				case *writeRequest:
+				case *WriteRequest:
 					mStream, end := c.mutableMStreamMap.appendEntry(request)
 					if end == -1 {
 						request.err = ErrOffset
@@ -273,7 +273,7 @@ func (c *committer) start() {
 						c.indexTable.update(mStream)
 					}
 					item := notifyPool.Get().(*notify)
-					item.streamID = request.entry.StreamID
+					item.streamID = request.Entry.StreamID
 					item.end = end
 					c.endWatchers.notify(item)
 					if c.mutableMStreamMap.mSize >= c.maxMStreamTableSize {

@@ -110,17 +110,17 @@ func (sStore *SStore) init() error {
 				continue
 			}
 		}
-		if err := journal.Read(func(e *writeRequest) error {
-			if e.entry.Ver.Index <= sStore.version.Index {
+		if err := journal.Read(func(e *WriteRequest) error {
+			if e.Entry.Ver.Index <= sStore.version.Index {
 				return nil //skip
-			} else if e.entry.Ver.Index == sStore.version.Index+1 {
+			} else if e.Entry.Ver.Index == sStore.version.Index+1 {
 				e.cb = cb
-				sStore.version = e.entry.Ver
+				sStore.version = e.Entry.Ver
 				committer.queue.Push(e)
 			} else {
 				return errors.WithMessage(ErrJournal,
 					fmt.Sprintf("e.ID[%d] sStore.index+1[%d] %s",
-						e.entry.Ver.Index, sStore.version.Index+1, filename))
+						e.Entry.Ver.Index, sStore.version.Index+1, filename))
 			}
 			return nil
 		}); err != nil {

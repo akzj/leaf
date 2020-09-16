@@ -1,6 +1,7 @@
 package ssyncer
 
 import (
+	"context"
 	"crypto/md5"
 	"fmt"
 	"github.com/akzj/streamIO/pkg/sstore"
@@ -8,7 +9,7 @@ import (
 	"github.com/akzj/streamIO/proto"
 	log "github.com/sirupsen/logrus"
 	"io"
-	"time"
+	"sync/atomic"
 )
 
 /*
@@ -25,7 +26,8 @@ func NewService(store *sstore.SStore) *Service {
 }
 
 func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncService_SyncRequestServer) error {
-	return s.store.Sync(stream.Context(), request.StreamServerId, request.Index, func(callback sstore.SyncCallback) error {
+	var entryIndex int64
+	err := s.store.Sync(stream.Context(), request.StreamServerId, request.Index, func(callback sstore.SyncCallback) error {
 		if callback.Segment != nil {
 			if err := stream.Send(&proto.SyncResponse{SegmentInfo: &proto.SegmentBegin{
 				Name: callback.Segment.Filename(),
@@ -42,7 +44,6 @@ func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncServi
 			for {
 				n, err := callback.Segment.Read(buffer)
 				if err == io.EOF {
-
 					if err := stream.Send(&proto.SyncResponse{
 						SegmentEnd: &proto.SegmentEnd{
 							Md5Sum: fmt.Sprintf("%x", hash.Sum(nil)),
@@ -68,62 +69,79 @@ func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncServi
 				}
 			}
 		} else {
+			var size int
+			var response = proto.SyncResponse{Entries: make([]*pb.Entry, 0, 64)}
+			var appendEntry = func(entry *pb.Entry) {
+				if callback.Index != nil {
+					atomic.AddInt64(callback.Index, 1)
+				}
+				if entryIndex == 0 {
+					entryIndex = entry.Ver.Index
+				} else {
+					entryIndex++
+					if entryIndex != entry.Ver.Index {
+						log.Panic(entryIndex, entry)
+					}
+				}
+				response.Entries = append(response.Entries, entry)
+				size += len(entry.Data) + 32
+			}
+			var responseEntry = func() error {
+				if len(response.Entries) != 0 {
+					if err := stream.Send(&response); err != nil {
+						log.Errorf(err.Error())
+						return err
+					}
+					size = 0
+					response = proto.SyncResponse{Entries: make([]*pb.Entry, 0, 64)}
+				}
+				return nil
+			}
+
 			if callback.Entry != nil {
 				fmt.Println("callback entry", callback.Entry.Ver)
-				if err := stream.Send(&proto.SyncResponse{
-					Entries: []*pb.Entry{callback.Entry},
-				}); err != nil {
-					log.Errorf(err.Error())
-					return err
-				}
+				appendEntry(callback.Entry)
 				callback.Entry = nil
 			}
-			if callback.Entries != nil {
-				tick := time.NewTicker(time.Millisecond * 10)
-				defer tick.Stop()
-				var end = false
-				for !end {
-					var size int
-					var response = proto.SyncResponse{Entries: make([]*pb.Entry, 0, 64)}
-					select {
-					case entry := <-callback.Entries:
-						if entry == nil {
-							return nil //
+			if callback.EntryQueue != nil {
+				for {
+					items, err := callback.EntryQueue.PopAll(nil)
+					if err != nil {
+						if err == context.Canceled {
+							break
 						}
-						response.Entries = append(response.Entries, entry)
-						size += len(entry.Data) + 32
+						return err
 					}
-					begin := time.Now()
-					for {
-						select {
-						case entry := <-callback.Entries:
-							if entry == nil {
-								end = true
-								goto responseEntry
-							}
-							response.Entries = append(response.Entries, entry)
-							size += len(entry.Data) + 32
-							if size > 1024*1024 {
-								goto responseEntry
-							}
-						case ts := <-tick.C:
-							if begin.Sub(ts) > time.Millisecond*10 {
-								goto responseEntry
+					for _, item := range items {
+						var entry *pb.Entry
+						switch item := item.(type) {
+						case *pb.Entry:
+							entry = item
+						case *sstore.WriteRequest:
+							entry = item.Entry
+						default:
+							panic(item)
+						}
+						appendEntry(entry)
+						if size > 1024*1024 {
+							if err := responseEntry(); err != nil {
+								return err
 							}
 						}
 					}
-
-				responseEntry:
-					if len(response.Entries) != 0 {
-						fmt.Println("entries", len(response.Entries))
-						if err := stream.Send(&response); err != nil {
-							log.Errorf(err.Error())
-							return err
-						}
+					if err := responseEntry(); err != nil {
+						return err
 					}
+				}
+				if err := responseEntry(); err != nil {
+					return err
 				}
 			}
 		}
 		return nil
 	})
+	if err != nil {
+		log.Warn(err)
+	}
+	return err
 }

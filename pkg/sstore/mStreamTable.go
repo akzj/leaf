@@ -58,18 +58,18 @@ func (m *mStreamTable) loadOrCreateMStream(streamID int64) (*mStream, bool) {
 	return ms, false
 }
 
-//appendEntry append writeRequest mStream,and return the mStream if it created
-func (m *mStreamTable) appendEntry(e *writeRequest) (*mStream, int64) {
-	ms, load := m.loadOrCreateMStream(e.entry.StreamID)
-	end := ms.write(e.entry.Offset, e.entry.Data)
+//appendEntry append WriteRequest mStream,and return the mStream if it created
+func (m *mStreamTable) appendEntry(e *WriteRequest) (*mStream, int64) {
+	ms, load := m.loadOrCreateMStream(e.Entry.StreamID)
+	end := ms.write(e.Entry.Offset, e.Entry.Data)
 	if end == -1 {
 		return nil, -1
 	}
-	m.endMap.set(e.entry.StreamID, end, e.entry.Ver)
-	m.mSize += int64(len(e.entry.Data))
-	m.to = e.entry.Ver
+	m.endMap.set(e.Entry.StreamID, end, e.Entry.Ver)
+	m.mSize += int64(len(e.Entry.Data))
+	m.to = e.Entry.Ver
 	if m.from == nil {
-		m.from = e.entry.Ver
+		m.from = e.Entry.Ver
 	}
 	if load {
 		return nil, end

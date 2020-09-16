@@ -34,7 +34,8 @@ type StreamStat struct {
 }
 
 func OpenStore(path string) (*Store, error) {
-	sstore, err := sstore.Open(sstore.DefaultOptions(path))
+	sstore, err := sstore.Open(sstore.DefaultOptions(path).
+		WithMaxWalSize(8 * sstore.MB).WithMaxMStreamTableSize(128 * sstore.MB))
 	if err != nil {
 		log.Warningf("sstore open %s failed %+v", path, err)
 		return nil, err

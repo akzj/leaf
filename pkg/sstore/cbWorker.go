@@ -33,14 +33,13 @@ func (worker *cbWorker) start() {
 				item := items[index]
 				items[index] = nil
 				switch request := item.(type) {
-				case *writeRequest:
+				case *WriteRequest:
 					request.cb(request.end, request.err)
 				case *closeRequest:
 					request.cb()
 					return
 				}
 			}
-			objsPool.Put(items[:0])
 		}
 	}()
 }

@@ -16,16 +16,20 @@ package sstore
 import (
 	"bufio"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
+	"github.com/edsrzf/mmap-go"
 	"github.com/pkg/errors"
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
+	"unsafe"
 )
 
 const version1 = "ver1"
 
 // write ahead log
 type journal struct {
+	*ref
 	filename     string
 	size         int64
 	f            *os.File
@@ -33,7 +37,31 @@ type journal struct {
 	meta         *pb.JournalMeta
 	index        *journalIndex
 	offsetReader *offsetReader
+	flushVer     unsafe.Pointer //*pb.Version
+
+	JournalMMap *JournalMMap
+}
+
+type JournalMMap struct {
 	*ref
+	data mmap.MMap
+}
+
+func openJournalMMap(f *os.File) *JournalMMap {
+	m, err := mmap.MapRegion(f, 1024*1024*1024*1024, mmap.RDONLY, 0, 0)
+	if err != nil {
+		panic(err)
+	}
+	jmmap := JournalMMap{
+		ref:  nil,
+		data: m,
+	}
+	jmmap.ref = newRef(1, func() {
+		if err := jmmap.data.Unmap(); err != nil {
+			panic(err)
+		}
+	})
+	return &jmmap
 }
 
 func openJournal(filename string) (*journal, error) {
@@ -44,7 +72,9 @@ func openJournal(filename string) (*journal, error) {
 	if err := f.Sync(); err != nil {
 		return nil, err
 	}
-	w := &journal{
+	var w = &journal{
+		ref: newRef(1, func() {
+		}),
 		filename: filename,
 		size:     0,
 		f:        f,
@@ -55,9 +85,10 @@ func openJournal(filename string) (*journal, error) {
 			From:     &pb.Version{},
 			To:       &pb.Version{},
 		},
-		index: new(journalIndex),
-		ref: newRef(1, func() {
-		}),
+		index:        new(journalIndex),
+		offsetReader: nil,
+		flushVer:     unsafe.Pointer(&pb.Version{}),
+		JournalMMap:  openJournalMMap(f),
 	}
 	return w, nil
 }
@@ -84,7 +115,12 @@ func (j *journal) Flush() error {
 	if err := j.writer.Flush(); err != nil {
 		return errors.WithStack(err)
 	}
+	atomic.StorePointer(&j.flushVer, unsafe.Pointer(j.meta.To))
 	return nil
+}
+
+func (j *journal) GetFlushIndex() int64 {
+	return (*pb.Version)(atomic.LoadPointer(&j.flushVer)).Index
 }
 
 func (j *journal) Sync() error {
@@ -94,10 +130,10 @@ func (j *journal) Sync() error {
 	return nil
 }
 
-func (j *journal) Write(e *writeRequest) error {
-	j.meta.To = e.entry.Ver
+func (j *journal) Write(e *WriteRequest) error {
+	j.meta.To = e.Entry.Ver
 	if j.meta.From.Index == 0 {
-		j.meta.From = e.entry.Ver
+		j.meta.From = e.Entry.Ver
 	}
 	var offset = j.size
 	if n, err := e.WriteTo(j.writer); err != nil {
@@ -107,7 +143,7 @@ func (j *journal) Write(e *writeRequest) error {
 	}
 	j.index.append(jIndex{
 		Offset: offset,
-		Index:  e.entry.Ver.Index,
+		Index:  e.Entry.Ver.Index,
 	})
 	return nil
 }
@@ -123,14 +159,21 @@ func (j *journal) Close() error {
 	if err := j.f.Close(); err != nil {
 		return errors.WithStack(err)
 	}
+	j.JournalMMap.refDec()
 	return nil
+}
+func (j *journal) GetJournalMMap() *JournalMMap {
+	if count := j.JournalMMap.refInc(); count < 0 {
+		return nil
+	}
+	return j.JournalMMap
 }
 
 func (j *journal) Filename() string {
 	return j.filename
 }
 
-func (j *journal) Read(cb func(e *writeRequest) error) error {
+func (j *journal) Read(cb func(e *WriteRequest) error) error {
 	j.offsetReader = &offsetReader{
 		reader: bufio.NewReader(j.f),
 		offset: 0,
@@ -143,7 +186,7 @@ func (j *journal) Read(cb func(e *writeRequest) error) error {
 			}
 			return errors.WithStack(err)
 		}
-		if err := cb(&writeRequest{entry: e}); err != nil {
+		if err := cb(&WriteRequest{Entry: e}); err != nil {
 			return err
 		}
 	}
@@ -166,14 +209,15 @@ func (j *journal) RebuildIndex() error {
 	}
 	j.index = new(journalIndex)
 	var offset int64
-	return j.Read(func(e *writeRequest) error {
-		j.meta.To = e.entry.Ver
+	return j.Read(func(e *WriteRequest) error {
+		j.meta.To = e.Entry.Ver
+		j.flushVer = unsafe.Pointer(e.Entry.Ver)
 		if j.meta.From.Index == 0 {
-			j.meta.From = e.entry.Ver
+			j.meta.From = e.Entry.Ver
 		}
 		j.index.append(jIndex{
 			Offset: offset,
-			Index:  e.entry.Ver.Index,
+			Index:  e.Entry.Ver.Index,
 		})
 		offset = j.offsetReader.offset
 		return nil

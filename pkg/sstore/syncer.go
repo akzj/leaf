@@ -2,15 +2,16 @@ package sstore
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	block_queue "github.com/akzj/streamIO/pkg/block-queue"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 	"sync/atomic"
 )
@@ -29,7 +30,7 @@ type Syncer struct {
 type subscriber struct {
 	nextIndex *int64
 	bytes     int64
-	entries   chan *pb.Entry
+	queue     *block_queue.QueueWithContext
 }
 
 type jIndex struct {
@@ -47,16 +48,17 @@ type journalIndex struct {
 }
 
 type SyncCallback struct {
-	Segment *SegmentReader
-	Entry   *pb.Entry
-	Entries chan *pb.Entry
+	Index      *int64
+	Segment    *SegmentReader
+	Entry      *pb.Entry
+	EntryQueue *block_queue.QueueWithContext
 }
 
-func newSubscriber(index *int64) *subscriber {
+func newSubscriber(ctx context.Context, index *int64) *subscriber {
 	return &subscriber{
 		nextIndex: index,
 		bytes:     0,
-		entries:   make(chan *pb.Entry, 1024*4),
+		queue:     block_queue.NewQueueWithContext(ctx, 1),
 	}
 }
 
@@ -74,9 +76,6 @@ func (syncer *Syncer) appendJournal(journal *journal) {
 	syncer.journalLocker.Lock()
 	defer syncer.journalLocker.Unlock()
 	syncer.journals = append(syncer.journals, journal)
-	sort.Slice(syncer.journals, func(i, j int) bool {
-		return syncer.journals[i].meta.From.Index < syncer.journals[j].meta.From.Index
-	})
 }
 
 func (syncer *Syncer) deleteJournal(filename string) {
@@ -106,48 +105,75 @@ func (syncer *Syncer) syncJournal(ctx context.Context, index *int64,
 	journal *journal, f func(callback SyncCallback) error) error {
 
 	defer journal.refDec()
-	JI, err := journal.index.find(atomic.LoadInt64(index))
+	begin, err := journal.index.find(atomic.LoadInt64(index))
 	if err != nil {
 		panic(err)
 	}
-	file, err := os.Open(journal.filename)
-	if err != nil {
-		return err
-	}
-	if _, err := file.Seek(JI.Offset, io.SeekStart); err != nil {
-		return err
-	}
-	var entries = make(chan *pb.Entry, 100)
-	go func() {
-		if err := f(SyncCallback{Entries: entries}); err != nil {
-			fmt.Println(err)
+
+	var reader io.Reader
+	journalMMap := journal.GetJournalMMap()
+	if journalMMap != nil {
+		defer journalMMap.refDec()
+		bufReader := bytes.NewReader(journalMMap.data[:1024*1024*1024*1024])
+		if _, err := bufReader.Seek(begin.Offset, io.SeekStart); err != nil {
+			return err
 		}
+		reader = bufReader
+	} else {
+		file, err := os.Open(journal.filename)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			_ = file.Close()
+		}()
+		if _, err := file.Seek(begin.Offset, io.SeekStart); err != nil {
+			return err
+		}
+		reader = bufio.NewReaderSize(file, 1024*1024)
+	}
+
+	var queue = block_queue.NewQueueWithContext(ctx, 1024)
+	var errs = make(chan error)
+	go func() {
+		errs <- f(SyncCallback{EntryQueue: queue})
+		fmt.Println("syncJournal done ", journal.filename)
 	}()
-	reader := bufio.NewReaderSize(file, 1024*1024)
-	for {
+	var count int64
+	defer func() {
+		fmt.Println("index", atomic.LoadInt64(index))
+	}()
+	for count = journal.GetFlushIndex() - atomic.LoadInt64(index); count >= 0; count-- {
 		entry, err := decodeEntry(reader)
 		if err != nil {
-			fmt.Println(err.Error())
+			log.Error(err)
 			if err == io.EOF {
-				close(entries)
-				return nil
+				queue.Close(nil)
+				break
 			}
 			if err == io.ErrUnexpectedEOF {
-				close(entries)
-				return nil
+				queue.Close(nil)
+				break
 			}
 			return err
 		}
-		select {
-		case entries <- entry:
-			atomic.AddInt64(index, 1)
-		case <-ctx.Done():
-			return ctx.Err()
+		if entry.Ver.Index != atomic.LoadInt64(index) {
+			log.Panic(*index, entry.Ver)
 		}
+		atomic.AddInt64(index, 1)
+		if err := queue.Push(entry); err != nil {
+			return err
+		}
+	}
+	queue.Close(nil)
+	select {
+	case err := <-errs:
+		return err
 	}
 }
 
 func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f func(SyncCallback) error) error {
+	fmt.Println("SyncRequest", serverID, index)
 	//ssyncer from segment
 	segment := syncer.sstore.committer.getSegmentByIndex(index, true)
 	if segment != nil {
@@ -173,8 +199,8 @@ func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f 
 		var journal *journal
 		syncer.journalLocker.Lock()
 		for _, journalIter := range syncer.journals {
-			fmt.Println(journalIter.meta)
-			if index <= journalIter.meta.To.Index {
+			if index >= journalIter.meta.From.Index && index <= journalIter.GetFlushIndex() {
+				fmt.Println("find", journalIter.meta, "flushIndex", journalIter.GetFlushIndex(), "index", index)
 				journal = journalIter
 				journal.refInc()
 				break
@@ -185,41 +211,64 @@ func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f 
 			if err := syncer.syncJournal(ctx, &index, journal, f); err != nil {
 				return err
 			}
+			select {
+			case <-ctx.Done():
+				log.Warn(ctx.Err())
+				return nil
+			default:
+			}
 		} else {
 			// ssyncer from subscriber
+			fmt.Println("add to subscriber")
 			syncer.subscribersLocker.Lock()
 			sub, ok := syncer.subscribers[serverID]
 			if ok == false {
-				sub = newSubscriber(&index)
+				sub = newSubscriber(ctx, &index)
 				syncer.subscribers[serverID] = sub
 			}
 			syncer.subscribersLocker.Unlock()
 
 		Loop:
 			for {
-				select {
-				case entry := <-sub.entries:
-					if entry.Ver.Index < atomic.LoadInt64(&index) {
-						continue
-					} else if entry.Ver.Index == atomic.LoadInt64(&index) {
-						return f(SyncCallback{
-							Segment: nil,
-							Entry:   entry,
-							Entries: sub.entries,
-						})
-					} else {
-						//read from journal again
-						fmt.Println("//read from journal again")
+				item, err := sub.queue.Pop()
+				if err != nil {
+					syncer.deleteSubscriber(serverID)
+					if sub.queue.IsClose() && sub.queue.CloseErr() == errQueueFull {
 						break Loop
 					}
+					return err
+				}
+				entry := item.(*WriteRequest).Entry
+				if entry.Ver.Index < atomic.LoadInt64(&index) {
+					continue
+				} else if entry.Ver.Index == atomic.LoadInt64(&index) {
+					err := f(SyncCallback{
+						Index:      &index,
+						Segment:    nil,
+						Entry:      entry,
+						EntryQueue: sub.queue,
+					})
+					syncer.deleteSubscriber(serverID)
+					if err != nil {
+						log.Warn(err)
+						return err
+					}
+					break Loop
+				} else {
+					//read from journal again
+					fmt.Println("//read from journal again")
+					break Loop
 				}
 			}
 		}
 	}
 }
+
 func (syncer *Syncer) start() {
 	go syncer.pushEntryLoop()
 }
+
+var errQueueFull = errors.New("queue full error")
 
 func (syncer *Syncer) pushEntryLoop() {
 	for {
@@ -229,24 +278,16 @@ func (syncer *Syncer) pushEntryLoop() {
 			syncer.subscribersLocker.Unlock()
 			continue
 		}
-		for _, item := range items {
-			for index, sub := range syncer.subscribers {
-				switch request := item.(type) {
-				case *writeRequest:
-					nextIndex := atomic.LoadInt64(sub.nextIndex)
-					if nextIndex <= request.entry.Ver.Index {
-						select {
-						case sub.entries <- request.entry:
-						default:
-							close(sub.entries)
-							delete(syncer.subscribers, index)
-						}
-					}
-				case *closeRequest:
-					request.cb()
-					syncer.subscribersLocker.Unlock()
-					return
-				}
+		for index, sub := range syncer.subscribers {
+			remain, err := sub.queue.PushManyWithBlock(items)
+			if err != nil {
+				delete(syncer.subscribers, index)
+				continue
+			}
+			if len(remain) > 0 {
+				sub.queue.Close(errQueueFull)
+				delete(syncer.subscribers, index)
+				continue
 			}
 		}
 		syncer.subscribersLocker.Unlock()
@@ -320,7 +361,7 @@ func (s *SegmentReader) Seek(offset int64, whence int) (int64, error) {
 }
 
 func (s *SegmentReader) Close() error {
-	err := s.Close()
+	err := s.f.Close()
 	s.release()
 	return err
 }

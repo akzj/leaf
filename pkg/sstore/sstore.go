@@ -99,8 +99,8 @@ func (sstore *SStore) Append(streamID int64, data []byte, offset int64) (int64, 
 
 //AsyncAppend async append the data to end of the stream
 func (sstore *SStore) AsyncAppend(streamID int64, data []byte, offset int64, cb func(offset int64, err error)) {
-	sstore.entryQueue.Push(&writeRequest{
-		entry: &pb.Entry{
+	sstore.entryQueue.Push(&WriteRequest{
+		Entry: &pb.Entry{
 			StreamID: streamID,
 			Offset:   offset,
 			Ver: &pb.Version{
@@ -119,8 +119,8 @@ func (sstore *SStore) AsyncAppend(streamID int64, data []byte, offset int64, cb 
 //AsyncAppend async append the data to end of the stream
 func (sstore *SStore) AppendEntryWithCb(entry *pb.Entry, cb func(offset int64, err error)) {
 	sstore.version = entry.Ver
-	sstore.entryQueue.Push(&writeRequest{
-		entry: entry,
+	sstore.entryQueue.Push(&WriteRequest{
+		Entry: entry,
 		close: false,
 		end:   0,
 		err:   nil,

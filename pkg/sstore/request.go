@@ -18,27 +18,22 @@ import (
 	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/golang/protobuf/proto"
 	"io"
-	"sync"
 )
 
 type closeRequest struct {
 	cb func()
 }
 
-type writeRequest struct {
-	entry *pb.Entry
+type WriteRequest struct {
+	Entry *pb.Entry
 	close bool
 	end   int64
 	err   error
 	cb    func(end int64, err error)
 }
 
-var objsPool = sync.Pool{New: func() interface{} {
-	return make([]interface{}, 0, 64)
-}}
-
-func (e *writeRequest) WriteTo(w io.Writer) (n int64, err error) {
-	data, err := proto.Marshal(e.entry)
+func (e *WriteRequest) WriteTo(w io.Writer) (n int64, err error) {
+	data, err := proto.Marshal(e.Entry)
 	if err != nil {
 		return 0, err
 	}
@@ -46,7 +41,7 @@ func (e *writeRequest) WriteTo(w io.Writer) (n int64, err error) {
 		return 0, err
 	}
 	n2, err := w.Write(data)
-	return int64(n2), err
+	return int64(n2 + 4), err
 }
 
 func decodeEntry(reader io.Reader) (*pb.Entry, error) {

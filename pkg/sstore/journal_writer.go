@@ -18,7 +18,6 @@ import (
 	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/pkg/errors"
 	"log"
-	"math"
 	"path/filepath"
 	"sync"
 )
@@ -47,8 +46,8 @@ func newJournalWriter(journal *journal,
 	}
 }
 
-//append the writeRequest to the queue of writer
-func (jWriter *journalWriter) append(e *writeRequest) {
+//append the WriteRequest to the queue of writer
+func (jWriter *journalWriter) append(e *WriteRequest) {
 	jWriter.queue.Push(e)
 }
 
@@ -68,12 +67,12 @@ func (jWriter *journalWriter) createNewJournal() error {
 	if err := jWriter.manifest.AppendJournal(&pb.AppendJournal{Filename: index}); err != nil {
 		return err
 	}
-	if err := jWriter.journal.Close(); err != nil {
-		return err
-	}
 	header := jWriter.journal.GetMeta()
 	header.Old = true
 	if err := jWriter.manifest.setJournalHeader(header); err != nil {
+		return err
+	}
+	if err := jWriter.journal.Close(); err != nil {
 		return err
 	}
 	jWriter.journal = journal
@@ -81,17 +80,15 @@ func (jWriter *journalWriter) createNewJournal() error {
 	return nil
 }
 
-const closeSignal = math.MinInt64
-
 func (jWriter *journalWriter) start() {
 	go func() {
 		for {
-			var writeRequests = objsPool.Get().([]interface{})[:0]
+			var writeRequests = make([]interface{}, 0, 128)
 			entries := jWriter.queue.PopAll(nil)
 			for i := range entries {
 				e := entries[i]
 				switch request := e.(type) {
-				case *writeRequest:
+				case *WriteRequest:
 					if jWriter.journal.Size() > jWriter.maxJournalSize {
 						if err := jWriter.createNewJournal(); err != nil {
 							request.cb(-1, err)

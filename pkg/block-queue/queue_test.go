@@ -14,6 +14,7 @@
 package block_queue
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"sync/atomic"
@@ -61,7 +62,7 @@ func TestMultiGoroutine(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		time.Sleep(time.Second)
 		p := atomic.LoadInt64(&pos)
-		fmt.Println("items/second",p - last)
+		fmt.Println("items/second", p-last)
 		last = p
 	}
 }
@@ -73,7 +74,25 @@ func BenchmarkPushPop(b *testing.B) {
 	go func() {
 		for {
 			queue.Pop()
-			counts ++
+			counts++
+		}
+	}()
+	b.ReportAllocs()
+	b.N = 50000000
+	for i := 0; i < b.N; i++ {
+		queue.Push(i)
+	}
+	fmt.Println("items/second", int64(float64(counts)/time.Now().Sub(begin).Seconds()))
+}
+
+func BenchmarkPushPopContextQueue(b *testing.B) {
+	queue := NewQueueWithContext(context.Background(), 128)
+	begin := time.Now()
+	var counts int64
+	go func() {
+		for {
+			queue.Pop()
+			counts++
 		}
 	}()
 	b.ReportAllocs()

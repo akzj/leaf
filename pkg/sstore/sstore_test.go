@@ -1,8 +1,10 @@
 package sstore
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
+	"github.com/edsrzf/mmap-go"
 	"hash/crc32"
 	"io/ioutil"
 	"os"
@@ -85,8 +87,8 @@ func TestWalHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	if err := wal.Write(&writeRequest{
-		entry: &pb.Entry{Ver: &pb.Version{Index: 1000}},
+	if err := wal.Write(&WriteRequest{
+		Entry: &pb.Entry{Ver: &pb.Version{Index: 1000}},
 		close: false,
 		end:   0,
 		err:   nil,
@@ -330,11 +332,11 @@ func TestAsyncAppend(t *testing.T) {
 	defer os.RemoveAll("data")
 	sstore, err := Open(DefaultOptions("data").
 		WithMaxMStreamTableSize(256 * MB).
-		WithMaxWalSize(256*MB))
+		WithMaxWalSize(256 * MB))
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	var data = make([]byte,64)
+	var data = make([]byte, 64)
 	var wg sync.WaitGroup
 	var count int64
 	go func() {
@@ -367,4 +369,41 @@ func TestAsyncAppend(t *testing.T) {
 	if len(sstore.manifest.getSegmentFiles()) == 5 {
 		t.Fatalf("")
 	}
+}
+
+func TestMMap(t *testing.T) {
+	defer os.RemoveAll("db")
+	if err := os.MkdirAll("db", 0777); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile("db/1.log", os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mmap, err := mmap.MapRegion(f, 1024*1024*1024*1024, mmap.RDONLY, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := strings.Repeat("hello world", 1024*1024*10)
+	if _, err := f.WriteString(data); err != nil {
+		t.Fatal(err)
+	}
+	all, err := ioutil.ReadFile("db/1.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fmt.Println(len(data) / 1024 / 1024)
+
+	if bytes.Compare(all, []byte(data)) != 0 {
+		fmt.Println(len(all), len(data))
+	}
+
+	data2 := mmap[:len(data)]
+
+	if bytes.Compare(data2, []byte(data)) != 0 {
+		t.Fatal("error")
+	}
+
 }

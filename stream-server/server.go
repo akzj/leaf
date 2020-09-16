@@ -56,11 +56,11 @@ func New(options Options) *StreamServer {
 	})
 	log.WithField("options", options).Info("new stream")
 	_ = os.MkdirAll(filepath.Dir(options.LogPath), 0777)
-	file, err := os.OpenFile(options.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	/*file, err := os.OpenFile(options.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {
 		log.Panic(err.Error())
-	}
-	log.SetOutput(file)
+	}*/
+	//log.SetOutput(file)
 	log.SetLevel(options.LogLevel)
 	log.SetFormatter(&log.TextFormatter{DisableQuote: true})
 	log.SetReportCaller(true)

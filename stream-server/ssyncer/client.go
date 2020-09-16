@@ -10,6 +10,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"io"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -32,6 +33,8 @@ func (c *Client) Stop() {
 	c.cancel()
 }
 
+var entryIndex int64
+
 func (c *Client) Start(ctx context.Context, localStreamServiceID int64, serviceAddr string) error {
 	c.ctx, c.cancel = context.WithCancel(ctx)
 	conn, err := grpc.DialContext(c.ctx, serviceAddr, grpc.WithInsecure())
@@ -42,7 +45,25 @@ func (c *Client) Start(ctx context.Context, localStreamServiceID int64, serviceA
 	var segmentWriter *sstore.SegmentWriter
 	defer func() {
 		if segmentWriter != nil {
-			segmentWriter.Discard()
+			_ = segmentWriter.Discard()
+		}
+	}()
+
+	var segmentName string
+	var count int64
+	var lCount int64
+	go func() {
+		for {
+			temp := atomic.LoadInt64(&count)
+			if msg := temp - lCount; msg > 0 {
+				fmt.Println("msg/second", msg)
+			}
+			lCount = temp
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
 		}
 	}()
 	for {
@@ -52,6 +73,7 @@ func (c *Client) Start(ctx context.Context, localStreamServiceID int64, serviceA
 			StreamServerId: localStreamServiceID,
 		})
 		if err != nil {
+			log.Warn(err)
 			select {
 			case <-c.ctx.Done():
 				return c.ctx.Err()
@@ -60,23 +82,11 @@ func (c *Client) Start(ctx context.Context, localStreamServiceID int64, serviceA
 			}
 		}
 		hash := md5.New()
-		var segmentName string
-		var appendEntryError bool
-		var count int64
-		var lCount int64
-		go func() {
-			for {
-				temp := atomic.LoadInt64(&count)
-				if msg := (temp - lCount) * 10; msg > 0 {
-					fmt.Println("msg/second", msg)
-				}
-				lCount = temp
-				time.Sleep(time.Millisecond * 100)
-			}
-		}()
-		for !appendEntryError {
+		var wg sync.WaitGroup
+		for {
 			response, err := stream.Recv()
 			if err == io.EOF {
+				log.Warn(err)
 				break
 			}
 			if err != nil {
@@ -120,16 +130,27 @@ func (c *Client) Start(ctx context.Context, localStreamServiceID int64, serviceA
 				segmentWriter = nil
 			} else if response.Entries != nil {
 				for _, entry := range response.Entries {
+					if entryIndex == 0 {
+						entryIndex = entry.Ver.Index
+					} else {
+						entryIndex++
+						if entryIndex != entry.Ver.Index {
+							fmt.Println(entryIndex, entry.Ver.Index)
+							entryIndex = entry.Ver.Index
+						}
+					}
 					atomic.AddInt64(&count, 1)
-					//fmt.Println(entry.Ver)
+					wg.Add(1)
 					c.sstore.AppendEntryWithCb(entry, func(offset int64, cbError error) {
+						wg.Done()
 						if cbError != nil {
 							log.Warn(cbError)
-							appendEntryError = true
+							panic(err)
 						}
 					})
 				}
 			}
 		}
+		wg.Wait()
 	}
 }

@@ -121,7 +121,7 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 				select {
 				case streamResults <- result:
 				case <-ctx.Done():
-					log.Error(ctx.Err())
+					//log.Warn(ctx.Err())
 				}
 			})
 		}
@@ -133,7 +133,9 @@ func (server *StreamServer) printMsgCount() {
 	for {
 		time.Sleep(time.Second)
 		msgCount := atomic.LoadInt64(&server.count)
-		fmt.Println(msgCount - lastCount)
+		if msgCount-lastCount > 0 {
+			fmt.Println(msgCount - lastCount)
+		}
 		lastCount = msgCount
 	}
 }
