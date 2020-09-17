@@ -251,10 +251,10 @@ func (c *committer) start() {
 			for i := range items {
 				request := items[i]
 				switch request := request.(type) {
-				case *closeRequest:
+				case *CloseRequest:
 					c.flusher.close()
 					c.callbackQueue.Push(request)
-				case *WriteRequest:
+				case *WriteEntryRequest:
 					mStream, end := c.mutableMStreamMap.appendEntry(request)
 					if end == -1 {
 						request.err = ErrOffset

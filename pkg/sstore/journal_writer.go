@@ -46,8 +46,8 @@ func newJournalWriter(journal *journal,
 	}
 }
 
-//append the WriteRequest to the queue of writer
-func (jWriter *journalWriter) append(e *WriteRequest) {
+//append the WriteEntryRequest to the queue of writer
+func (jWriter *journalWriter) append(e *WriteEntryRequest) {
 	jWriter.queue.Push(e)
 }
 
@@ -60,7 +60,7 @@ func (jWriter *journalWriter) createNewJournal() error {
 	if err != nil {
 		return err
 	}
-	journal, err := openJournal(index)
+	journal, err := OpenJournal(index)
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -83,24 +83,24 @@ func (jWriter *journalWriter) createNewJournal() error {
 func (jWriter *journalWriter) start() {
 	go func() {
 		for {
-			var writeRequests = make([]interface{}, 0, 128)
 			entries := jWriter.queue.PopAll(nil)
+			var writeRequests = make([]interface{}, 0, len(entries))
 			for i := range entries {
 				e := entries[i]
 				switch request := e.(type) {
-				case *WriteRequest:
+				case *WriteEntryRequest:
 					if jWriter.journal.Size() > jWriter.maxJournalSize {
 						if err := jWriter.createNewJournal(); err != nil {
 							request.cb(-1, err)
 							continue
 						}
 					}
-					if err := jWriter.journal.Write(request); err != nil {
+					if err := jWriter.journal.Write(request.Entry); err != nil {
 						request.cb(-1, err)
 					} else {
 						writeRequests = append(writeRequests, request)
 					}
-				case *closeRequest:
+				case *CloseRequest:
 					_ = jWriter.journal.Close()
 					jWriter.commitQueue.Push(e)
 					return
@@ -120,7 +120,7 @@ func (jWriter *journalWriter) start() {
 func (jWriter *journalWriter) close() {
 	var wg sync.WaitGroup
 	wg.Add(1)
-	jWriter.queue.Push(&closeRequest{cb: func() {
+	jWriter.queue.Push(&CloseRequest{CB: func() {
 		wg.Done()
 	}})
 	wg.Wait()

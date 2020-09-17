@@ -117,7 +117,7 @@ func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncServi
 						switch item := item.(type) {
 						case *pb.Entry:
 							entry = item
-						case *sstore.WriteRequest:
+						case *sstore.WriteEntryRequest:
 							entry = item.Entry
 						default:
 							panic(item)

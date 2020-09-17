@@ -83,17 +83,11 @@ func TestWalHeader(t *testing.T) {
 		os.RemoveAll("data")
 	}()
 	os.MkdirAll("data", 0777)
-	wal, err := openJournal("data/1.log")
+	wal, err := OpenJournal("data/1.log")
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	if err := wal.Write(&WriteRequest{
-		Entry: &pb.Entry{Ver: &pb.Version{Index: 1000}},
-		close: false,
-		end:   0,
-		err:   nil,
-		cb:    nil,
-	}); err != nil {
+	if err := wal.Write(&pb.Entry{Ver: &pb.Version{Index: 1000}}); err != nil {
 		t.Fatalf("%+v", err)
 	}
 	header := wal.GetMeta()

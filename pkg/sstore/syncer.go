@@ -147,7 +147,7 @@ func (syncer *Syncer) syncJournal(ctx context.Context, index *int64,
 		fmt.Println("index", atomic.LoadInt64(index))
 	}()
 	for count = journal.GetFlushIndex() - atomic.LoadInt64(index); count >= 0; count-- {
-		entry, err := decodeEntry(reader)
+		entry, err := DecodeEntry(reader)
 		if err != nil {
 			log.Error(err)
 			if err == io.EOF {
@@ -241,7 +241,7 @@ func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f 
 					}
 					return err
 				}
-				entry := item.(*WriteRequest).Entry
+				entry := item.(*WriteEntryRequest).Entry
 				if entry.Ver.Index < atomic.LoadInt64(&index) {
 					continue
 				} else if entry.Ver.Index == atomic.LoadInt64(&index) {
@@ -314,8 +314,8 @@ func (syncer *Syncer) OpenSegmentReader(segment *segment) (*SegmentReader, error
 func (syncer *Syncer) Close() {
 	var wg sync.WaitGroup
 	wg.Add(1)
-	syncer.queue.Push(&closeRequest{
-		cb: func() {
+	syncer.queue.Push(&CloseRequest{
+		CB: func() {
 			wg.Done()
 		},
 	})

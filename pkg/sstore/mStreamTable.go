@@ -58,8 +58,8 @@ func (m *mStreamTable) loadOrCreateMStream(streamID int64) (*mStream, bool) {
 	return ms, false
 }
 
-//appendEntry append WriteRequest mStream,and return the mStream if it created
-func (m *mStreamTable) appendEntry(e *WriteRequest) (*mStream, int64) {
+//appendEntry append WriteEntryRequest mStream,and return the mStream if it created
+func (m *mStreamTable) appendEntry(e *WriteEntryRequest) (*mStream, int64) {
 	ms, load := m.loadOrCreateMStream(e.Entry.StreamID)
 	end := ms.write(e.Entry.Offset, e.Entry.Data)
 	if end == -1 {

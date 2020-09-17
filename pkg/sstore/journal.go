@@ -15,8 +15,10 @@ package sstore
 
 import (
 	"bufio"
+	"encoding/binary"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/edsrzf/mmap-go"
+	pproto "github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
 	"io"
 	"os"
@@ -55,7 +57,7 @@ func openJournalMMap(f *os.File) *JournalMMap {
 	}
 	jmmap := JournalMMap{
 		ref:  nil,
-		data: m,
+		data: m[:mmapSize],
 	}
 	jmmap.ref = newRef(1, func() {
 		if err := jmmap.data.Unmap(); err != nil {
@@ -65,7 +67,7 @@ func openJournalMMap(f *os.File) *JournalMMap {
 	return &jmmap
 }
 
-func openJournal(filename string) (*journal, error) {
+func OpenJournal(filename string) (*journal, error) {
 	f, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
 		return nil, errors.WithStack(err)
@@ -138,21 +140,26 @@ func (j *journal) Sync() error {
 	return nil
 }
 
-func (j *journal) Write(e *WriteRequest) error {
-	j.meta.To = e.Entry.Ver
+func (j *journal) Write(entry *pb.Entry) error {
+	j.meta.To = entry.Ver
 	if j.meta.From.Index == 0 {
-		j.meta.From = e.Entry.Ver
+		j.meta.From = entry.Ver
 	}
-	var offset = j.size
-	if n, err := e.WriteTo(j.writer); err != nil {
+	data, err := pproto.Marshal(entry)
+	if err != nil {
 		return err
-	} else {
-		j.size += n
+	}
+	if err := binary.Write(j.writer, binary.BigEndian, int32(len(data))); err != nil {
+		return err
+	}
+	if _, err := j.writer.Write(data); err != nil {
+		return err
 	}
 	j.index.append(jIndex{
-		Offset: offset,
-		Index:  e.Entry.Ver.Index,
+		Offset: j.size,
+		Index:  entry.Ver.Index,
 	})
+	j.size += int64(len(data) + 4)
 	return nil
 }
 
@@ -203,7 +210,7 @@ func (j *journal) Range(callback func(entry *pb.Entry) error) error {
 	}
 	for {
 		var offset = offsetReader.offset
-		entry, err := decodeEntry(offsetReader)
+		entry, err := DecodeEntry(offsetReader)
 		if err != nil {
 			if err == io.EOF {
 				return nil
@@ -223,5 +230,24 @@ func (j *journal) Range(callback func(entry *pb.Entry) error) error {
 			return err
 		}
 	}
-	return nil
+}
+
+func (j *journal) Index() *journalIndex {
+	return j.index
+}
+
+func DecodeEntry(reader io.Reader) (*pb.Entry, error) {
+	var size int32
+	if err := binary.Read(reader, binary.BigEndian, &size); err != nil {
+		return nil, err
+	}
+	data := make([]byte, size)
+	if _, err := io.ReadFull(reader, data); err != nil {
+		return nil, err
+	}
+	var entry pb.Entry
+	if err := pproto.Unmarshal(data, &entry); err != nil {
+		return nil, err
+	}
+	return &entry, nil
 }

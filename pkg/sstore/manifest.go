@@ -122,9 +122,9 @@ func (m *manifest) reload() error {
 
 	sortIntFilename(logFiles)
 	if len(logFiles) == 0 {
-		m.journal, err = openJournal(filepath.Join(m.manifestDir, "1"+manifestJournalExt))
+		m.journal, err = OpenJournal(filepath.Join(m.manifestDir, "1"+manifestJournalExt))
 	} else {
-		m.journal, err = openJournal(logFiles[len(logFiles)-1])
+		m.journal, err = OpenJournal(logFiles[len(logFiles)-1])
 		if err != nil {
 			return err
 		}
@@ -226,7 +226,7 @@ func (m *manifest) compactionLog() {
 	m.Version.Index++
 	tmpJournal := strconv.FormatInt(m.FileIndex.SegmentIndex, 10) + manifestJournalExtTmp
 	tmpJournal = filepath.Join(m.manifestDir, tmpJournal)
-	journal, err := openJournal(tmpJournal)
+	journal, err := OpenJournal(tmpJournal)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -234,17 +234,11 @@ func (m *manifest) compactionLog() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := journal.Write(&WriteRequest{
-		Entry: &pb.Entry{
-			StreamID: manifestSnapshotType,
-			Offset:   0,
-			Data:     data,
-			Ver:      m.Version,
-		},
-		close: false,
-		end:   0,
-		err:   nil,
-		cb:    nil,
+	if err := journal.Write(&pb.Entry{
+		StreamID: manifestSnapshotType,
+		Offset:   0,
+		Data:     data,
+		Ver:      m.Version,
 	}); err != nil {
 		log.Fatal(err)
 	}
@@ -267,7 +261,7 @@ func (m *manifest) compactionLog() {
 	if err := os.Remove(m.journal.Filename()); err != nil {
 		log.Fatal(err)
 	}
-	m.journal, err = openJournal(filename)
+	m.journal, err = OpenJournal(filename)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -393,17 +387,11 @@ func (m *manifest) deleteSegment(deleteS *pb.DeleteSegment) error {
 
 func (m *manifest) writeEntry(typ int64, data []byte, ) error {
 	m.Version.Index++
-	if err := m.journal.Write(&WriteRequest{
-		Entry: &pb.Entry{
-			StreamID: typ,
-			Offset:   0,
-			Data:     data,
-			Ver:      m.Version,
-		},
-		close: false,
-		end:   0,
-		err:   nil,
-		cb:    nil,
+	if err := m.journal.Write(&pb.Entry{
+		StreamID: typ,
+		Offset:   0,
+		Data:     data,
+		Ver:      m.Version,
 	}); err != nil {
 		return err
 	}

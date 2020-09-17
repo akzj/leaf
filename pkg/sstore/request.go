@@ -14,48 +14,17 @@
 package sstore
 
 import (
-	"encoding/binary"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
-	"github.com/golang/protobuf/proto"
-	"io"
 )
 
-type closeRequest struct {
-	cb func()
+type CloseRequest struct {
+	CB func()
 }
 
-type WriteRequest struct {
+type WriteEntryRequest struct {
 	Entry *pb.Entry
 	close bool
 	end   int64
 	err   error
 	cb    func(end int64, err error)
-}
-
-func (e *WriteRequest) WriteTo(w io.Writer) (n int64, err error) {
-	data, err := proto.Marshal(e.Entry)
-	if err != nil {
-		return 0, err
-	}
-	if err := binary.Write(w, binary.BigEndian, int32(len(data))); err != nil {
-		return 0, err
-	}
-	n2, err := w.Write(data)
-	return int64(n2 + 4), err
-}
-
-func decodeEntry(reader io.Reader) (*pb.Entry, error) {
-	var size int32
-	if err := binary.Read(reader, binary.BigEndian, &size); err != nil {
-		return nil, err
-	}
-	data := make([]byte, size)
-	if _, err := io.ReadFull(reader, data); err != nil {
-		return nil, err
-	}
-	var entry pb.Entry
-	if err := proto.Unmarshal(data, &entry); err != nil {
-		return nil, err
-	}
-	return &entry, nil
 }
