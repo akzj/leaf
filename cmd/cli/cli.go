@@ -120,7 +120,7 @@ func writeStream(metaServer string, streamName string, data string, count int64)
 	var size int
 	hash := md5.New()
 	var wg sync.WaitGroup
-	for i := int64(1); 1 <= count; i++ {
+	for i := int64(1); i <= count; i++ {
 		wg.Add(1)
 		buffer := data + strconv.Itoa(int(i)) + "\n"
 		writer.WriteWithCb([]byte(buffer), func(err error) {

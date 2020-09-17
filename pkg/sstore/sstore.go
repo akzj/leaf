@@ -209,7 +209,7 @@ func (sstore *SStore) CreateSegmentWriter(filename string) (*SegmentWriter, erro
 	if err := sstore.manifest.setSegmentIndex(segmentIndex); err != nil {
 		return nil, err
 	}
-	filename = filepath.Join(sstore.options.JournalDir, filename)
+	filename = filepath.Join(sstore.options.SegmentDir, filename)
 	f, err := os.Create(filename)
 	if err != nil {
 		return nil, errors.WithStack(err)

@@ -129,57 +129,57 @@ func (m *manifest) reload() error {
 			return err
 		}
 	}
-	err = m.journal.Read(func(e *WriteRequest) error {
-		m.Version = e.Entry.Ver
-		switch e.Entry.StreamID {
+	err = m.journal.Range(func(entry *pb.Entry) error {
+		m.Version = entry.Ver
+		switch entry.StreamID {
 		case appendSegmentType:
 			var appendS pb.AppendSegment
-			if err := proto.Unmarshal(e.Entry.Data, &appendS); err != nil {
+			if err := proto.Unmarshal(entry.Data, &appendS); err != nil {
 				return errors.WithStack(err)
 			}
 			return m.appendSegment(&appendS)
 		case deleteSegmentType:
 			var deleteS pb.DeleteSegment
-			if err := proto.Unmarshal(e.Entry.Data, &deleteS); err != nil {
+			if err := proto.Unmarshal(entry.Data, &deleteS); err != nil {
 				return errors.WithStack(err)
 			}
 			return m.deleteSegment(&deleteS)
 		case appendJournalType:
 			var message pb.AppendJournal
-			if err := proto.Unmarshal(e.Entry.Data, &message); err != nil {
+			if err := proto.Unmarshal(entry.Data, &message); err != nil {
 				return errors.WithStack(err)
 			}
 			return m.AppendJournal(&message)
 		case deleteJournalType:
 			var message pb.DeleteJournal
-			if err := proto.Unmarshal(e.Entry.Data, &message); err != nil {
+			if err := proto.Unmarshal(entry.Data, &message); err != nil {
 				return errors.WithStack(err)
 			}
 			return m.deleteJournal(&message)
 		case manifestSnapshotType:
-			if err := proto.Unmarshal(e.Entry.Data, m); err != nil {
+			if err := proto.Unmarshal(entry.Data, m); err != nil {
 				return errors.WithStack(err)
 			}
 		case setJournalHeaderType:
 			var header pb.JournalMeta
-			if err := proto.Unmarshal(e.Entry.Data, &header); err != nil {
+			if err := proto.Unmarshal(entry.Data, &header); err != nil {
 				return errors.WithStack(err)
 			}
 			return m.setJournalHeader(&header)
 		case FilesIndexType:
 			var fileIndex pb.FileIndex
-			if err := proto.Unmarshal(e.Entry.Data, &fileIndex); err != nil {
+			if err := proto.Unmarshal(entry.Data, &fileIndex); err != nil {
 				return errors.WithStack(err)
 			}
 			m.FileIndex = &fileIndex
 		case delWalHeaderType:
 			var message pb.DelJournalHeader
-			if err := proto.Unmarshal(e.Entry.Data, &message); err != nil {
+			if err := proto.Unmarshal(entry.Data, &message); err != nil {
 				return err
 			}
 			return m.delWalHeader(&message)
 		default:
-			log.Fatalf("unknown type %d", e.Entry.StreamID)
+			log.Fatalf("unknown type %d", entry.StreamID)
 		}
 		return nil
 	})

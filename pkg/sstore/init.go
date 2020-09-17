@@ -18,6 +18,7 @@ import (
 	"github.com/akzj/streamIO/pkg/block-queue"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,94 +92,79 @@ func (sStore *SStore) init() error {
 		}
 		sStore.version = segment.meta.To
 		sStore.committer.appendSegment(file, segment)
+		log.Infof("segment index [%d,%d]",
+			segment.meta.From.Index, segment.meta.To.Index)
 	}
 	if sStore.version == nil {
 		sStore.version = &pb.Version{}
 	}
 
 	//replay entries in the journal
+	var leastJournal *journal
 	journalFiles := manifest.getJournalFiles()
-	var cb = func(int64, error) {}
-	for _, filename := range journalFiles {
+	for index, filename := range journalFiles {
+		least := filename == journalFiles[index]
 		journal, err := openJournal(filepath.Join(sStore.options.JournalDir, filename))
 		if err != nil {
 			return err
 		}
-		//skip
-		if header, err := manifest.getJournalHeader(filename); err == nil {
-			if header.Old && header.To.Index <= sStore.version.Index {
+		header, err := manifest.getJournalHeader(filename)
+		if err != nil {
+			if !least {
+				return err
+			}
+		} else {
+			if header.Old && header.To.Index < sStore.version.Index {
+				_ = journal.Close()
 				continue
 			}
 		}
-		if err := journal.Read(func(e *WriteRequest) error {
-			if e.Entry.Ver.Index <= sStore.version.Index {
-				return nil //skip
-			} else if e.Entry.Ver.Index == sStore.version.Index+1 {
-				e.cb = cb
-				sStore.version = e.Entry.Ver
-				committer.queue.Push(e)
+		if err := journal.Range(func(entry *pb.Entry) error {
+			if entry.Ver.Index <= sStore.version.Index {
+				return nil
+			} else if entry.Ver.Index == sStore.version.Index+1 {
+				sStore.version = entry.Ver
+				committer.queue.Push(&WriteRequest{
+					Entry: entry,
+					cb:    func(end int64, err error) {},
+				})
 			} else {
 				return errors.WithMessage(ErrJournal,
-					fmt.Sprintf("e.ID[%d] sStore.index+1[%d] %s",
-						e.Entry.Ver.Index, sStore.version.Index+1, filename))
+					fmt.Sprintf("entry.ID[%d] sStore.index+1[%d] %s", entry.Ver.Index, sStore.version.Index+1, filename))
 			}
 			return nil
 		}); err != nil {
 			_ = journal.Close()
 			return err
 		}
-		if err := journal.Close(); err != nil {
-			return err
+		log.Infof("journal index [%d,%d]", journal.GetMeta().From.Index, journal.GetMeta().To.Index)
+		sStore.syncer.appendJournal(journal)
+		if least == false {
+			if err := journal.Close(); err != nil {
+				return err
+			}
+		} else {
+			leastJournal = journal
 		}
 	}
 
 	//create journal writer
-	var journal *journal
-	fmt.Println(journalFiles)
-	if len(journalFiles) > 0 {
-		journal, err = openJournal(filepath.Join(sStore.options.JournalDir, journalFiles[len(journalFiles)-1]))
-		if err != nil {
-			return err
-		}
-		if err := journal.RebuildIndex(); err != nil {
-			return err
-		}
-		fmt.Println("journal.RebuildIndex() done",journal.meta)
-	} else {
+	if leastJournal == nil {
 		file, err := manifest.geNextJournal()
 		if err != nil {
 			panic(err)
 		}
-		journal, err = openJournal(file)
+		leastJournal, err = openJournal(file)
 		if err != nil {
 			return err
 		}
 		if err := manifest.AppendJournal(&pb.AppendJournal{Filename: file}); err != nil {
 			return err
 		}
+		sStore.syncer.appendJournal(leastJournal)
 	}
 
-	sStore.syncer.appendJournal(journal)
-
-	//rebuild journal index
-	for _, filename := range manifest.getJournalFiles() {
-		journalFile := filepath.Join(sStore.options.JournalDir, filename)
-		if journalFile == journal.filename {
-			continue
-		}
-
-		if journal, err := openJournal(journalFile); err != nil {
-			return err
-		} else {
-			if err := journal.RebuildIndex(); err != nil {
-				return err
-			}
-			_ = journal.Close()
-			sStore.syncer.appendJournal(journal)
-		}
-	}
-
-	sStore.journalWriter = newJournalWriter(journal, sStore.entryQueue,
+	sStore.journalWriter = newJournalWriter(leastJournal, sStore.entryQueue,
 		sStore.committer.queue, sStore.syncer, sStore.manifest, sStore.options.MaxJournalSize)
 	sStore.journalWriter.start()
 

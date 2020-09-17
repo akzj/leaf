@@ -114,9 +114,12 @@ func (syncer *Syncer) syncJournal(ctx context.Context, index *int64,
 	journalMMap := journal.GetJournalMMap()
 	if journalMMap != nil {
 		defer journalMMap.refDec()
-		bufReader := bytes.NewReader(journalMMap.data[:1024*1024*1024*1024])
+		bufReader := bytes.NewReader(journalMMap.data[:mmapSize])
 		if _, err := bufReader.Seek(begin.Offset, io.SeekStart); err != nil {
 			return err
+		}
+		if begin.Offset >= mmapSize {
+			log.Panic(begin.Offset)
 		}
 		reader = bufReader
 	} else {

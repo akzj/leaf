@@ -30,14 +30,13 @@ const version1 = "ver1"
 // write ahead log
 type journal struct {
 	*ref
-	filename     string
-	size         int64
-	f            *os.File
-	writer       *bufio.Writer
-	meta         *pb.JournalMeta
-	index        *journalIndex
-	offsetReader *offsetReader
-	flushVer     unsafe.Pointer //*pb.Version
+	filename string
+	size     int64
+	f        *os.File
+	writer   *bufio.Writer
+	meta     *pb.JournalMeta
+	index    *journalIndex
+	flushVer unsafe.Pointer //*pb.Version
 
 	JournalMMap *JournalMMap
 }
@@ -47,8 +46,10 @@ type JournalMMap struct {
 	data mmap.MMap
 }
 
+const mmapSize = 1024 * 1024 * 1024 * 1024
+
 func openJournalMMap(f *os.File) *JournalMMap {
-	m, err := mmap.MapRegion(f, 1024*1024*1024*1024, mmap.RDONLY, 0, 0)
+	m, err := mmap.MapRegion(f, mmapSize, mmap.RDONLY, 0, 0)
 	if err != nil {
 		panic(err)
 	}
@@ -72,11 +73,15 @@ func openJournal(filename string) (*journal, error) {
 	if err := f.Sync(); err != nil {
 		return nil, err
 	}
+	stat, err := f.Stat()
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
 	var w = &journal{
 		ref: newRef(1, func() {
 		}),
 		filename: filename,
-		size:     0,
+		size:     stat.Size(),
 		f:        f,
 		writer:   bufio.NewWriterSize(f, 4*1024*1024),
 		meta: &pb.JournalMeta{
@@ -85,10 +90,9 @@ func openJournal(filename string) (*journal, error) {
 			From:     &pb.Version{},
 			To:       &pb.Version{},
 		},
-		index:        new(journalIndex),
-		offsetReader: nil,
-		flushVer:     unsafe.Pointer(&pb.Version{}),
-		JournalMMap:  openJournalMMap(f),
+		index:       new(journalIndex),
+		flushVer:    unsafe.Pointer(&pb.Version{}),
+		JournalMMap: openJournalMMap(f),
 	}
 	return w, nil
 }
@@ -105,6 +109,10 @@ func (j *journal) SeekEnd() error {
 		return errors.WithStack(err)
 	}
 	return nil
+}
+
+func (j *journal) SetMeta(meta *pb.JournalMeta) {
+	j.meta = meta
 }
 
 func (j *journal) GetMeta() *pb.JournalMeta {
@@ -173,25 +181,6 @@ func (j *journal) Filename() string {
 	return j.filename
 }
 
-func (j *journal) Read(cb func(e *WriteRequest) error) error {
-	j.offsetReader = &offsetReader{
-		reader: bufio.NewReader(j.f),
-		offset: 0,
-	}
-	for {
-		e, err := decodeEntry(j.offsetReader)
-		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			return errors.WithStack(err)
-		}
-		if err := cb(&WriteRequest{Entry: e}); err != nil {
-			return err
-		}
-	}
-}
-
 type offsetReader struct {
 	reader io.Reader
 	offset int64
@@ -203,23 +192,36 @@ func (o *offsetReader) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-func (j *journal) RebuildIndex() error {
+func (j *journal) Range(callback func(entry *pb.Entry) error) error {
+	j.index = new(journalIndex)
 	if _, err := j.f.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	j.index = new(journalIndex)
-	var offset int64
-	return j.Read(func(e *WriteRequest) error {
-		j.meta.To = e.Entry.Ver
-		j.flushVer = unsafe.Pointer(e.Entry.Ver)
+	var offsetReader = &offsetReader{
+		reader: bufio.NewReader(j.f),
+		offset: 0,
+	}
+	for {
+		var offset = offsetReader.offset
+		entry, err := decodeEntry(offsetReader)
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return errors.WithStack(err)
+		}
+		j.meta.To = entry.Ver
+		j.flushVer = unsafe.Pointer(entry.Ver)
 		if j.meta.From.Index == 0 {
-			j.meta.From = e.Entry.Ver
+			j.meta.From = entry.Ver
 		}
 		j.index.append(jIndex{
 			Offset: offset,
-			Index:  e.Entry.Ver.Index,
+			Index:  entry.Ver.Index,
 		})
-		offset = j.offsetReader.offset
-		return nil
-	})
+		if err := callback(entry); err != nil {
+			return err
+		}
+	}
+	return nil
 }

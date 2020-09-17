@@ -103,22 +103,14 @@ func (c *committer) getSegmentByIndex(index int64, lockSync bool) *segment {
 	if len(segments) == 0 {
 		return nil
 	}
-	sort.Slice(segments, func(i, j int) bool {
-		if len(segments[i].filename) != len(segments[i].filename) {
-			return len(segments[i].filename) < len(segments[i].filename)
+	for _, segment := range c.segments {
+		if segment.meta.From.Index <= index && index <= segment.meta.To.Index {
+			segment.refInc()
+			if lockSync {
+				segment.GetSyncLocker().Lock()
+			}
+			return segment
 		}
-		return segments[i].filename < segments[i].filename
-	})
-	i := sort.Search(len(segments), func(i int) bool {
-		return index <= segments[i].meta.From.Index
-	})
-	if i < len(segments) {
-		segment := segments[i]
-		segment.refInc()
-		if lockSync {
-			segment.GetSyncLocker().Lock()
-		}
-		return segment
 	}
 	return nil
 }
