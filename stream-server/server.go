@@ -16,6 +16,7 @@ package stream_server
 import (
 	"context"
 	"github.com/akzj/streamIO/proto"
+	"github.com/akzj/streamIO/stream-server/ssyncer"
 	"github.com/akzj/streamIO/stream-server/store"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -36,17 +37,30 @@ type StreamServer struct {
 	wg                sync.WaitGroup
 	ServerInfoBase    *proto.ServerInfoBase
 	store             *store.Store
-	grpcServer        *grpc.Server
+	streamGrpcServer  *grpc.Server
+	ssyncerGrpcServer *grpc.Server
+	GrpcServer        *grpc.Server
 	metaServiceClient proto.MetaServiceClient
+
+	syncService *ssyncer.Service
+
+	syncClientLocker sync.Mutex
+	syncClient       *ssyncer.Client
+
+	count int64
 }
 
 func New(options Options) *StreamServer {
+	log.SetFormatter(&log.JSONFormatter{
+		PrettyPrint: true,
+	})
+	log.WithField("options", options).Info("new stream")
 	_ = os.MkdirAll(filepath.Dir(options.LogPath), 0777)
-	file, err := os.OpenFile(options.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	/*file, err := os.OpenFile(options.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {
 		log.Panic(err.Error())
-	}
-	log.SetOutput(file)
+	}*/
+	//log.SetOutput(file)
 	log.SetLevel(options.LogLevel)
 	log.SetFormatter(&log.TextFormatter{DisableQuote: true})
 	log.SetReportCaller(true)
@@ -59,10 +73,10 @@ func New(options Options) *StreamServer {
 		ServerInfoBase: &proto.ServerInfoBase{
 			Id:     options.ServerID,
 			Leader: true,
-			Addr:   net.JoinHostPort(options.Host, strconv.Itoa(options.GRPCPort)),
+			Addr:   net.JoinHostPort(options.Host, strconv.Itoa(options.StreamPort)),
 		},
 		store:             nil,
-		grpcServer:        nil,
+		streamGrpcServer:  nil,
 		metaServiceClient: nil,
 	}
 }
@@ -96,19 +110,37 @@ func (server *StreamServer) init() error {
 	if err != nil {
 		return err
 	}
-	server.grpcServer = grpc.NewServer()
-	proto.RegisterStreamServiceServer(server.grpcServer, server)
+	server.syncService = ssyncer.NewService(server.store.GetSStore())
+	server.streamGrpcServer = grpc.NewServer()
+	server.ssyncerGrpcServer = grpc.NewServer()
+	proto.RegisterStreamServiceServer(server.streamGrpcServer, server)
+	proto.RegisterSyncServiceServer(server.ssyncerGrpcServer, server.syncService)
 	return nil
 }
 
-func (server *StreamServer) startGrpcServer() error {
+func (server *StreamServer) startStreamServer() error {
 	listener, err := net.Listen("tcp",
-		net.JoinHostPort(server.Host, strconv.Itoa(server.GRPCPort)))
+		net.JoinHostPort(server.Host, strconv.Itoa(server.StreamPort)))
 	if err != nil {
 		log.Error(err)
 		return err
 	}
-	if err := server.grpcServer.Serve(listener); err != nil {
+	go server.printMsgCount()
+	if err := server.streamGrpcServer.Serve(listener); err != nil {
+		log.Error(err)
+		return err
+	}
+	return nil
+}
+
+func (server *StreamServer) startSSyncerServer() error {
+	listener, err := net.Listen("tcp",
+		net.JoinHostPort(server.Host, strconv.Itoa(server.SyncPort)))
+	if err != nil {
+		log.Error(err)
+		return err
+	}
+	if err := server.ssyncerGrpcServer.Serve(listener); err != nil {
 		log.Error(err)
 		return err
 	}
@@ -120,7 +152,17 @@ func (server *StreamServer) Start() error {
 		return err
 	}
 	go server.heartbeatLoop()
-	if err := server.startGrpcServer(); err != nil {
+	go func() {
+		if err := server.startSSyncerServer(); err != nil {
+			log.Fatalf(err.Error())
+		}
+	}()
+	if server.Options.SyncFrom != "" {
+		if _, err := server.StartSyncFrom(server.ctx, &proto.SyncFromRequest{Addr: server.SyncFrom}); err != nil {
+			panic(err)
+		}
+	}
+	if err := server.startStreamServer(); err != nil {
 		return err
 	}
 	return nil
@@ -139,4 +181,8 @@ func (server *StreamServer) Stop(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (server *StreamServer) syncStreamFailed(streamServerAddr string, err error) {
+	//todo notify to cluster manager for dispatching new stream master server to sync
 }

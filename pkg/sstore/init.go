@@ -15,7 +15,10 @@ package sstore
 
 import (
 	"fmt"
+	"github.com/akzj/streamIO/pkg/block-queue"
+	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,10 +36,10 @@ func mkdir(dir string) error {
 	return nil
 }
 
-//reload segment,journal,index
-func reload(sStore *SStore) error {
+//init segment,journal,index
+func (sStore *SStore) init() error {
 	for _, dir := range []string{
-		sStore.options.WalDir,
+		sStore.options.JournalDir,
 		sStore.options.ManifestDir,
 		sStore.options.SegmentDir} {
 		if err := mkdir(dir); err != nil {
@@ -45,117 +48,134 @@ func reload(sStore *SStore) error {
 	}
 	manifest, err := openManifest(sStore.options.ManifestDir,
 		sStore.options.SegmentDir,
-		sStore.options.WalDir)
+		sStore.options.JournalDir)
 	if err != nil {
 		return err
 	}
-	sStore.files = manifest
+	sStore.manifest = manifest
 
 	mStreamTable := newMStreamTable(sStore.endMap, sStore.options.BlockSize, 128)
-	commitQueue := newEntryQueue(sStore.options.EntryQueueCap)
+	commitQueue := block_queue.NewQueue(sStore.options.RequestQueueCap)
 	committer := newCommitter(sStore.options,
 		sStore.endWatchers,
 		sStore.indexTable,
-		sStore.segments,
 		sStore.endMap,
 		mStreamTable,
 		commitQueue,
 		manifest,
-		sStore.options.BlockSize)
+		sStore.options.BlockSize,
+		sStore)
 	sStore.committer = committer
+	sStore.syncer = newSyncer(sStore)
 
 	sStore.committer.start()
-	sStore.files.start()
+	sStore.manifest.start()
 	sStore.endWatchers.start()
+	sStore.syncer.start()
 
 	//rebuild segment index
 	segmentFiles := manifest.getSegmentFiles()
+	sortIntFilename(segmentFiles)
 	for _, file := range segmentFiles {
 		segment, err := openSegment(filepath.Join(sStore.options.SegmentDir, file))
 		if err != nil {
 			return err
 		}
 		for _, info := range segment.meta.OffSetInfos {
-			sStore.endMap.set(info.StreamID, info.End, segment.meta.Ver)
+			sStore.endMap.set(info.StreamID, info.End, segment.meta.To)
 		}
-		if segment.meta.LastEntryID <= sStore.entryID {
+		if sStore.version == nil {
+			sStore.version = segment.meta.To
+		} else if segment.meta.From.Index <= sStore.version.Index {
 			return errors.Errorf("segment meta LastEntryID[%d] error",
-				segment.meta.LastEntryID)
+				segment.meta.From.Index)
 		}
-		sStore.entryID = segment.meta.LastEntryID
-		sStore.segments[file] = segment
-		if err := sStore.indexTable.update1(segment); err != nil {
-			return err
-		}
+		sStore.version = segment.meta.To
+		sStore.committer.appendSegment(file, segment)
+		log.Infof("segment index [%d,%d]",
+			segment.meta.From.Index, segment.meta.To.Index)
+	}
+	if sStore.version == nil {
+		sStore.version = &pb.Version{}
 	}
 
 	//replay entries in the journal
-	walFiles := manifest.getWalFiles()
-	var cb = func(int64, error) {}
-	for _, filename := range walFiles {
-		journal, err := openJournal(filepath.Join(sStore.options.WalDir, filename))
+	var leastJournal *journal
+	journalFiles := manifest.getJournalFiles()
+	for index, filename := range journalFiles {
+		least := filename == journalFiles[index]
+		journal, err := openJournal(filepath.Join(sStore.options.JournalDir, filename))
 		if err != nil {
 			return err
 		}
-		//skip
-		if walHeader, err := manifest.getWalHeader(filename); err == nil {
-			if walHeader.Old && walHeader.LastEntryID <= sStore.entryID {
+		header, err := manifest.getJournalHeader(filename)
+		if err != nil {
+			if !least {
+				return err
+			}
+		} else {
+			if header.Old && header.To.Index < sStore.version.Index {
+				_ = journal.Close()
 				continue
 			}
 		}
-		if err := journal.Read(func(e *entry) error {
-			if e.ID <= sStore.entryID {
-				return nil //skip
-			} else if e.ID == sStore.entryID+1 {
-				e.cb = cb
-				sStore.entryID++
-				committer.queue.put(e)
+		if err := journal.Range(func(entry *pb.Entry) error {
+			if entry.Ver.Index <= sStore.version.Index {
+				return nil
+			} else if entry.Ver.Index == sStore.version.Index+1 {
+				sStore.version = entry.Ver
+				committer.queue.Push(&WriteRequest{
+					Entry: entry,
+					cb:    func(end int64, err error) {},
+				})
 			} else {
-				return errors.WithMessage(ErrWal,
-					fmt.Sprintf("e.ID[%d] sStore.entryID+1[%d] %s", e.ID, sStore.entryID+1, filename))
+				return errors.WithMessage(ErrJournal,
+					fmt.Sprintf("entry.ID[%d] sStore.index+1[%d] %s", entry.Ver.Index, sStore.version.Index+1, filename))
 			}
 			return nil
 		}); err != nil {
 			_ = journal.Close()
 			return err
 		}
-		if err := journal.Close(); err != nil {
-			return err
+		log.Infof("journal index [%d,%d]", journal.GetMeta().From.Index, journal.GetMeta().To.Index)
+		sStore.syncer.appendJournal(journal)
+		if least == false {
+			if err := journal.Close(); err != nil {
+				return err
+			}
+		} else {
+			leastJournal = journal
 		}
 	}
 
 	//create journal writer
-	var w *journal
-	if len(walFiles) > 0 {
-		w, err = openJournal(filepath.Join(sStore.options.WalDir, walFiles[len(walFiles)-1]))
+	if leastJournal == nil {
+		file, err := manifest.geNextJournal()
+		if err != nil {
+			panic(err)
+		}
+		leastJournal, err = openJournal(file)
 		if err != nil {
 			return err
 		}
-		if err := w.SeekEnd(); err != nil {
-			return errors.WithStack(err)
-		}
-	} else {
-		file := manifest.getNextWal()
-		w, err = openJournal(file)
-		if err != nil {
+		if err := manifest.AppendJournal(&pb.AppendJournal{Filename: file}); err != nil {
 			return err
 		}
-		if err := manifest.appendWal(appendWal{Filename: file}); err != nil {
-			return err
-		}
+		sStore.syncer.appendJournal(leastJournal)
 	}
-	sStore.wWriter = newWWriter(w, sStore.entryQueue,
-		sStore.committer.queue, sStore.files, sStore.options.MaxWalSize)
-	sStore.wWriter.start()
+
+	sStore.journalWriter = newJournalWriter(leastJournal, sStore.entryQueue,
+		sStore.committer.queue, sStore.syncer, sStore.manifest, sStore.options.MaxJournalSize)
+	sStore.journalWriter.start()
 
 	//clear dead journal
-	walFiles = manifest.getWalFiles()
-	walFileAll, err := listDir(sStore.options.WalDir, manifestExt)
+	journalFiles = manifest.getJournalFiles()
+	allJournalFiles, err := listDir(sStore.options.JournalDir, manifestExt)
 	if err != nil {
 		return err
 	}
-	for _, filename := range diffStrings(walFileAll, walFiles) {
-		if err := os.Remove(filepath.Join(sStore.options.WalDir, filename)); err != nil {
+	for _, filename := range diffStrings(allJournalFiles, journalFiles) {
+		if err := os.Remove(filepath.Join(sStore.options.JournalDir, filename)); err != nil {
 			return errors.WithStack(err)
 		}
 		fmt.Println("delete filename " + filename)
@@ -191,11 +211,11 @@ func listDir(dir string, ext string) ([]string, error) {
 		return nil
 	})
 }
-func diffStrings(first []string, second []string) []string {
+func diffStrings(all []string, sub []string) []string {
 	var diff []string
 Loop:
-	for _, it := range first {
-		for _, ij := range second {
+	for _, it := range all {
+		for _, ij := range sub {
 			if it == ij {
 				continue Loop
 			}

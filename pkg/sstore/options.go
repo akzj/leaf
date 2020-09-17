@@ -21,14 +21,14 @@ import (
 type Options struct {
 	Path                          string `json:"path"`
 	ManifestDir                   string `json:"manifest_dir"`
-	WalDir                        string `json:"wal_dir"`
+	JournalDir                    string `json:"journal_dir"`
 	SegmentDir                    string `json:"segment_dir"`
 	MaxSegmentCount               int    `json:"max_segment_count"`
 	BlockSize                     int    `json:"block_size"`
 	MaxMStreamTableSize           int64  `json:"max_mStream_table_size"`
 	MaxImmutableMStreamTableCount int    `json:"max_immutable_mStream_table_count"`
-	EntryQueueCap                 int    `json:"entry_queue_cap"`
-	MaxWalSize                    int64  `json:"max_wal_size"`
+	RequestQueueCap               int    `json:"request_queue_cap"`
+	MaxJournalSize                int64  `json:"max_journal_size"`
 }
 
 const MB = 1024 * 1024
@@ -38,14 +38,14 @@ func DefaultOptions(Path string) Options {
 	return Options{
 		Path:                          Path,
 		ManifestDir:                   filepath.Join(Path, "manifest"),
-		WalDir:                        filepath.Join(Path, "journal"),
+		JournalDir:                    filepath.Join(Path, "journal"),
 		SegmentDir:                    filepath.Join(Path, "segment"),
 		MaxSegmentCount:               math.MaxInt32,
 		BlockSize:                     4 * KB,
 		MaxMStreamTableSize:           256 * MB,
-		MaxImmutableMStreamTableCount: 4,
-		EntryQueueCap:                 128,
-		MaxWalSize:                    64 * MB,
+		MaxImmutableMStreamTableCount: 2,
+		RequestQueueCap:               128,
+		MaxJournalSize:                128 * MB,
 	}
 }
 
@@ -61,9 +61,9 @@ func (opt Options) WithSegmentDir(val string) Options {
 	return opt
 }
 
-//WithWalPath
-func (opt Options) WithWalPath(val string) Options {
-	opt.WalDir = val
+//WithJournalPath
+func (opt Options) WithJournalPath(val string) Options {
+	opt.JournalDir = val
 	return opt
 }
 
@@ -93,12 +93,12 @@ func (opt Options) WithMaxImmutableMStreamTableCount(val int) Options {
 
 //WithMaxWalSize
 func (opt Options) WithMaxWalSize(val int64) Options {
-	opt.MaxWalSize = val
+	opt.MaxJournalSize = val
 	return opt
 }
 
-//EntryQueueCap
+//RequestQueueCap
 func (opt Options) WithEntryQueueCap(val int) Options {
-	opt.EntryQueueCap = val
+	opt.RequestQueueCap = val
 	return opt
 }

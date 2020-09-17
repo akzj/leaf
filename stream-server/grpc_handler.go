@@ -15,13 +15,19 @@ package stream_server
 
 import (
 	"context"
+	"fmt"
 	"github.com/akzj/streamIO/pkg/sstore"
+	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/akzj/streamIO/proto"
+	"github.com/akzj/streamIO/stream-server/ssyncer"
+	"github.com/golang/protobuf/ptypes/empty"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"io"
 	"strings"
+	"sync/atomic"
+	"time"
 )
 
 func (server *StreamServer) ReadStream(request *proto.ReadStreamRequest, stream proto.StreamService_ReadStreamServer) error {
@@ -57,8 +63,39 @@ func (server *StreamServer) ReadStream(request *proto.ReadStreamRequest, stream 
 }
 
 func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamServer) error {
-	var requestError error
-	for requestError == nil {
+	var streamResults = make(chan *proto.WriteStreamResult, 64)
+	var ctx = stream.Context()
+	var results = make([]*proto.WriteStreamResult, 0, 64)
+	go func() {
+		for {
+			select {
+			case result := <-streamResults:
+				results = append(results, result)
+			case <-ctx.Done():
+				log.Error(ctx.Err())
+				return
+			}
+			for {
+				select {
+				case result := <-streamResults:
+					results = append(results, result)
+				case <-ctx.Done():
+					log.Error(ctx.Err())
+					return
+				default:
+					goto responseResult
+				}
+			}
+
+		responseResult:
+			if err := stream.Send(&proto.WriteStreamResponse{Results: results}); err != nil {
+				log.Error(err)
+				return
+			}
+			results = make([]*proto.WriteStreamResult, 0, 64)
+		}
+	}()
+	for {
 		request, err := stream.Recv()
 		if err == io.EOF {
 			log.Warn(err)
@@ -68,26 +105,42 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 			log.Warn(err)
 			return err
 		}
-		//log.WithField("request", request).Info("WriteStream")
-		server.store.WriteRequest(request, func(offset int64, writerErr error) {
-			response := &proto.WriteStreamResponse{
-				StreamId:  request.StreamId,
-				Offset:    offset,
-				RequestId: request.RequestId,
-			}
-			if writerErr != nil {
-				response.Err = writerErr.Error()
-			}
-			if err = stream.Send(response); err != nil {
-				log.Warn(err)
-				requestError = err
-			}
-		})
+
+		for _, entry := range request.Entries {
+			entry := entry
+			server.store.WriteRequest(entry, func(offset int64, writerErr error) {
+				atomic.AddInt64(&server.count, 1)
+				result := &proto.WriteStreamResult{
+					Offset:    offset,
+					StreamId:  entry.StreamId,
+					RequestId: entry.RequestId,
+				}
+				if writerErr != nil {
+					result.Err = writerErr.Error()
+				}
+				select {
+				case streamResults <- result:
+				case <-ctx.Done():
+					//log.Warn(ctx.Err())
+				}
+			})
+		}
 	}
-	return requestError
 }
 
-func (server *StreamServer) GetStreamStat(ctx context.Context, request *proto.GetStreamStatRequest) (*proto.GetStreamStatResponse, error) {
+func (server *StreamServer) printMsgCount() {
+	var lastCount int64
+	for {
+		time.Sleep(time.Second)
+		msgCount := atomic.LoadInt64(&server.count)
+		if msgCount-lastCount > 0 {
+			fmt.Println(msgCount - lastCount)
+		}
+		lastCount = msgCount
+	}
+}
+
+func (server *StreamServer) GetStreamStat(_ context.Context, request *proto.GetStreamStatRequest) (*proto.GetStreamStatResponse, error) {
 	stat, err := server.store.GetStreamStat(request.StreamID)
 	if err != nil {
 		log.Warningf("GetStreamStat(%d) failed %s", request.StreamID, err.Error())
@@ -96,4 +149,24 @@ func (server *StreamServer) GetStreamStat(ctx context.Context, request *proto.Ge
 	return &proto.GetStreamStatResponse{End: stat.End,
 		Begin:    stat.Begin,
 		StreamID: stat.StreamID}, nil
+}
+
+func (server *StreamServer) StartSyncFrom(_ context.Context, request *proto.SyncFromRequest) (*empty.Empty, error) {
+	server.syncClientLocker.Lock()
+	defer server.syncClientLocker.Unlock()
+	if server.syncClient != nil {
+		server.syncClient.Stop()
+	}
+	server.syncClient = ssyncer.NewClient(server.store.GetSStore())
+	go func() {
+		if err := server.syncClient.Start(server.ctx, server.ServerID, request.Addr); err != nil {
+			log.Error(err)
+			server.syncStreamFailed(request.Addr, err)
+		}
+	}()
+	return &empty.Empty{}, nil
+}
+
+func (server *StreamServer) GetStreamStoreVersion(ctx context.Context, request *proto.GetStreamStoreVersionRequest) (*pb.Version, error) {
+	return server.store.GetSStore().Version(), nil
 }

@@ -16,6 +16,7 @@ package client
 import (
 	"bytes"
 	"context"
+	block_queue "github.com/akzj/streamIO/pkg/block-queue"
 	"github.com/akzj/streamIO/proto"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -28,8 +29,8 @@ type streamRequestWriter struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	requestId int64
-	requests  chan writeStreamRequest
+	requestId    int64
+	requestQueue *block_queue.Queue
 }
 
 type writeStreamRequest struct {
@@ -39,14 +40,18 @@ type writeStreamRequest struct {
 	callback  func(err error)
 }
 
+type closeNotify struct {
+	done func()
+}
+
 func newWriteStreamRequest(ctx context.Context, client proto.StreamServiceClient) *streamRequestWriter {
 	ctx, cancel := context.WithCancel(ctx)
 	return &streamRequestWriter{
-		client:    client,
-		ctx:       ctx,
-		cancel:    cancel,
-		requestId: 0,
-		requests:  make(chan writeStreamRequest),
+		client:       client,
+		ctx:          ctx,
+		cancel:       cancel,
+		requestId:    0,
+		requestQueue: block_queue.NewQueue(1024),
 	}
 }
 
@@ -62,9 +67,17 @@ func (writer *streamRequestWriter) writeLoop() {
 			log.Errorf(err.Error())
 		Loop:
 			for {
+				request := writer.requestQueue.PopAllWithoutBlock(nil)
+				for _, it := range request {
+					switch item := it.(type) {
+					case writeStreamRequest:
+						item.callback(err)
+					case closeNotify:
+						item.done()
+						return
+					}
+				}
 				select {
-				case request := <-writer.requests:
-					request.callback(err)
 				case <-time.After(time.Second):
 					break Loop
 				case <-writer.ctx.Done():
@@ -88,100 +101,98 @@ func (writer *streamRequestWriter) writeLoop() {
 					locker.Unlock()
 					return
 				}
-				locker.Lock()
-				request, ok := requestMap[response.RequestId]
-				delete(requestMap, response.RequestId)
-				locker.Unlock()
-				if ok == false {
-					log.WithField("requestID",
-						response.RequestId).Error("no find request")
-				} else {
-					if response.Err != "" {
-						request.callback(errors.New(response.Err))
+				for _, result := range response.Results {
+					locker.Lock()
+					request, ok := requestMap[result.RequestId]
+					delete(requestMap, result.RequestId)
+					locker.Unlock()
+					if ok == false {
+						log.WithField("requestID",
+							result.RequestId).Error("no find request")
 					} else {
-						request.callback(nil)
+						if result.Err != "" {
+							request.callback(errors.New(result.Err))
+						} else {
+							request.callback(nil)
+						}
 					}
 				}
 			}
 		}()
+		var entries = make([]*proto.WriteStreamEntry, 0, 64)
+		var size int
+		appendEntries := func(request writeStreamRequest) {
+			request.requestID = writer.getRequestID()
+			locker.Lock()
+			requestMap[request.requestID] = request
+			locker.Unlock()
+			entries = append(entries, &proto.WriteStreamEntry{
+				Offset:    -1,
+				StreamId:  request.streamID,
+				Data:      request.data,
+				RequestId: request.requestID,
+			})
+			size += len(request.data) + 24
+		}
 	writeLoop:
 		for {
-			select {
-			case <-writer.ctx.Done():
-				log.Error(writer.ctx.Err())
-			case request := <-writer.requests:
-				request.requestID = writer.getRequestID()
-				locker.Lock()
-				requestMap[request.requestID] = request
-				locker.Unlock()
-				if err := stream.Send(&proto.WriteStreamRequest{
-					StreamId:  request.streamID,
-					Offset:    -1,
-					Data:      request.data,
-					RequestId: request.requestID,
-				}); err != nil {
+			items := writer.requestQueue.PopAll(make([]interface{}, 0, 128))
+			for _, it := range items {
+				switch request := it.(type) {
+				case writeStreamRequest:
+					appendEntries(request)
+					if size >= 1024*1024 || len(entries) >= 256 {
+						break
+					}
+					continue
+				case closeNotify:
+					request.done()
+					return
+				}
+				if err := stream.Send(&proto.WriteStreamRequest{Entries: entries}); err != nil {
 					break writeLoop
 				}
+				entries = make([]*proto.WriteStreamEntry, 0, 64)
+				size = 0
+			}
+			if len(entries) != 0 {
+				if err := stream.Send(&proto.WriteStreamRequest{Entries: entries}); err != nil {
+					break writeLoop
+				}
+				entries = make([]*proto.WriteStreamEntry, 0, 64)
+				size = 0
 			}
 		}
 	}
 }
 
 func (writer *streamRequestWriter) Close() error {
-	close(writer.requests)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	writer.requestQueue.Push(closeNotify{
+		done: func() {
+			wg.Done()
+		},
+	})
+	wg.Wait()
 	return nil
 }
 
 type streamWriter struct {
-	locker              sync.Mutex
-	streamInfo          *proto.StreamInfoItem
-	buffer              bytes.Buffer
-	writeStreamRequests chan<- writeStreamRequest
+	locker     sync.Mutex
+	streamInfo *proto.StreamInfoItem
+	buffer     bytes.Buffer
+	queue      *block_queue.Queue
 }
 
 func (s *streamWriter) WriteWithCb(data []byte, callback func(err error)) {
-	s.writeStreamRequests <- writeStreamRequest{
+	s.queue.Push(writeStreamRequest{
 		data:     data,
 		streamID: s.streamInfo.StreamId,
 		callback: callback,
-	}
-}
-
-func (s *streamWriter) Write(data []byte) (n int, err error) {
-	s.locker.Lock()
-	defer s.locker.Unlock()
-	if s.buffer.Len()+len(data) >= minWriteSize {
-		if err := s.flushWithoutLock(); err != nil {
-			return 0, err
-		}
-	}
-	return s.buffer.Write(data)
+	})
 }
 
 func (s *streamWriter) StreamID() int64 {
 	return s.streamInfo.StreamId
-}
-func (s *streamWriter) Close() error {
-	return s.Flush()
-}
-
-func (s *streamWriter) Flush() error {
-	s.locker.Lock()
-	defer s.locker.Unlock()
-	return s.flushWithoutLock()
-}
-
-func (s *streamWriter) flushWithoutLock() error {
-	var err error
-	if s.buffer.Len() > 0 {
-		var wg sync.WaitGroup
-		wg.Add(1)
-		s.WriteWithCb(s.buffer.Bytes(), func(e error) {
-			err = e
-			wg.Done()
-		})
-		s.buffer.Reset()
-		wg.Wait()
-	}
-	return err
 }

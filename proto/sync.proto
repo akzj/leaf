@@ -1,0 +1,39 @@
+syntax = "proto3";
+package proto;
+
+option go_package = "github.com/akzj/streamIO/proto;proto";
+
+import "streamIO/pkg/sstore/pb/sstore.proto";
+
+
+message SyncRequest{
+  int64 index = 1;
+  int64 stream_server_id = 3;
+}
+
+message SegmentBegin{
+  string name = 1;
+  int64 size = 2;
+}
+
+message SegmentData{
+  int64 offset = 3;
+  bytes data = 4;
+}
+
+message SegmentEnd{
+  string md5sum = 1;
+}
+
+
+message SyncResponse{
+  SegmentBegin segment_info = 1;
+  SegmentData segment_data = 2;
+  SegmentEnd segment_end = 3;
+  repeated pb.Entry entries = 4;
+}
+
+
+service SyncService{
+  rpc sync_request(SyncRequest)returns (stream SyncResponse){}
+}

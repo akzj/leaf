@@ -25,9 +25,11 @@ import (
 	"github.com/rodaine/table"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
+	"google.golang.org/grpc"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -114,29 +116,24 @@ func writeStream(metaServer string, streamName string, data string, count int64)
 	}
 	go func() {
 		time.Sleep(time.Second * 3)
-		fmt.Println(writer.Close())
 	}()
 	var size int
 	hash := md5.New()
-	for count := count; count > 0; count-- {
-		buffer := data + strconv.Itoa(int(count)) + "\n"
-		n, err := writer.Write([]byte(buffer))
-		if err != nil {
-			panic(err.Error())
-		}
-		if n != len(buffer) {
-			panic("write error")
-		}
-		if err := writer.Flush(); err != nil {
-			log.Error(err.Error())
-		}
-		size += n
+	var wg sync.WaitGroup
+	for i := int64(1); i <= count; i++ {
+		wg.Add(1)
+		buffer := data + strconv.Itoa(int(i)) + "\n"
+		writer.WriteWithCb([]byte(buffer), func(err error) {
+			wg.Done()
+			if err != nil {
+				panic(err.Error())
+			}
+		})
 		hash.Write([]byte(buffer))
 	}
-	if err := writer.Flush(); err != nil {
-		log.Error(err)
-		return nil
-	}
+
+	wg.Wait()
+
 	fmt.Printf("write stream [%s] count [%d]  size [%d] md5[%x]\n", streamName, count, size, hash.Sum(nil))
 	return nil
 }
@@ -293,12 +290,28 @@ func mqttPub(brokerAddr string, topic string, clientID string, count int) error 
 	return nil
 }
 
+func getStreamServerStoreVersion(c *cli.Context) error {
+	metaServer := c.String("addr")
+	conn, err := grpc.DialContext(ctx, metaServer, grpc.WithInsecure())
+	if err != nil {
+		return err
+	}
+	client := proto.NewStreamServiceClient(conn)
+
+	version, err := client.GetStreamStoreVersion(ctx, &proto.GetStreamStoreVersionRequest{})
+	if err != nil {
+		return err
+	}
+	fmt.Println("term", version.Term, "index", version.Index)
+	return nil
+}
+
 func main() {
 	app := cli.App{
 		EnableBashCompletion: true,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
-				Name:    "ms",
+				Name:    "mss",
 				Aliases: []string{"m"},
 				Usage:   "meta-server-addr",
 				Value:   "127.0.0.1:5000",
@@ -306,20 +319,22 @@ func main() {
 		},
 		Commands: []*cli.Command{
 			{
-				Name:    "stream-server",
-				Aliases: []string{"s"},
-				Usage:   "stream-server operator",
+				Name:    "meta-server",
+				Aliases: []string{"ms"},
+				Usage:   "meta-server api",
 				Subcommands: []*cli.Command{
 					{
-						Name: "list",
+						Name:    "list_stream_server",
+						Usage:   "list stream-server info registering in meta-server",
+						Aliases: []string{"lss"},
 						Action: func(c *cli.Context) error {
-							return listStreamServer(c.String("ms"))
+							return listStreamServer(c.String("mss"))
 						},
 					},
 					{
-						Name:    "add",
-						Aliases: []string{"a"},
-						Usage:   "add stream-server",
+						Name:    "add_stream_server",
+						Aliases: []string{"ass"},
+						Usage:   "register stream-server info to meta-server store",
 						Flags: []cli.Flag{
 							&cli.Int64Flag{
 								Name:     "id",
@@ -335,10 +350,31 @@ func main() {
 							},
 						},
 						Action: func(c *cli.Context) error {
-							metaServerAddr := c.String("ms")
+							metaServerAddr := c.String("mss")
 							id := c.Int64("id")
 							addr := c.String("addr")
 							return addStreamServer(metaServerAddr, id, addr)
+						},
+					},
+				},
+			},
+			{
+				Name:  "stream-server",
+				Usage: "stream-server api",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:  "addr",
+						Usage: "stream-server addr",
+						Value: "127.0.0.1:7000",
+					},
+				},
+				Subcommands: []*cli.Command{
+					{
+						Name:    "version",
+						Usage:   "get version of stream-server store",
+						Aliases: []string{"ver"},
+						Action: func(c *cli.Context) error {
+							return getStreamServerStoreVersion(c)
 						},
 					},
 				},
@@ -349,8 +385,8 @@ func main() {
 				Flags: []cli.Flag{
 					&cli.StringFlag{
 						Name:  "broker",
-						Usage: "--broker [broker addr],eg : --broker tcp://127.0.0.1:8000",
-						Value: "ws://127.0.0.1:9000",
+						Usage: "--broker [broker addr],eg : --broker tcp://127.0.0.1:12000",
+						Value: "tcp://127.0.0.1:12000",
 					},
 					&cli.StringFlag{
 						Name:  "topic",
@@ -412,7 +448,7 @@ func main() {
 							},
 						},
 						Action: func(c *cli.Context) error {
-							return writeStream(c.String("ms"),
+							return writeStream(c.String("mss"),
 								c.String("name"),
 								c.String("data"),
 								c.Int64("count"))
@@ -442,7 +478,7 @@ func main() {
 							},
 						},
 						Action: func(c *cli.Context) error {
-							return readStream(c.String("ms"),
+							return readStream(c.String("mss"),
 								c.String("name"),
 								c.Int64("session_id"),
 								c.Int64("size"),
@@ -459,7 +495,7 @@ func main() {
 							},
 						},
 						Action: func(c *cli.Context) error {
-							return getStreamStat(c.String("ms"), c.String("name"))
+							return getStreamStat(c.String("mss"), c.String("name"))
 						},
 					},
 				},

@@ -14,6 +14,7 @@
 package sstore
 
 import (
+	"github.com/akzj/streamIO/pkg/block-queue"
 	"sync"
 )
 
@@ -32,11 +33,7 @@ type endWatchers struct {
 	watchIndex     int64
 	endWatcherMap  map[int64][]endWatcher
 	endWatcherLock *sync.RWMutex
-
-	l           *sync.Mutex
-	cond        *sync.Cond
-	notifyItems []*notify
-	s           chan interface{}
+	queue          *block_queue.Queue
 }
 
 var notifyPool = sync.Pool{New: func() interface{} {
@@ -44,15 +41,11 @@ var notifyPool = sync.Pool{New: func() interface{} {
 }}
 
 func newEndWatchers() *endWatchers {
-	l := new(sync.Mutex)
 	return &endWatchers{
 		watchIndex:     0,
-		l:              l,
-		cond:           sync.NewCond(l),
-		endWatcherLock: new(sync.RWMutex),
-		notifyItems:    make([]*notify, 0, 1024),
 		endWatcherMap:  make(map[int64][]endWatcher),
-		s:              make(chan interface{}, 1),
+		endWatcherLock: new(sync.RWMutex),
+		queue:          block_queue.NewQueue(1024),
 	}
 }
 func (endWatchers *endWatchers) removeEndWatcher(index int64, streamID int64) {
@@ -96,48 +89,38 @@ func (endWatchers *endWatchers) getEndWatcher(streamID int64) []endWatcher {
 	return watcher
 }
 
-func (endWatchers *endWatchers) take(buf []*notify) []*notify {
-	endWatchers.l.Lock()
-	defer endWatchers.l.Unlock()
-	for len(endWatchers.notifyItems) == 0 {
-		endWatchers.cond.Wait()
-	}
-	notifyItems := endWatchers.notifyItems
-	endWatchers.notifyItems = buf[:0]
-	return notifyItems
-}
-
 func (endWatchers *endWatchers) start() {
 	go func() {
-		var buf = make([]*notify, 0, 1024)
+		var buf = make([]interface{}, 0, 1024)
 		for {
-			items := endWatchers.take(buf)
-			buf = items
-
+			items := endWatchers.queue.PopAll(buf)
 			for _, item := range items {
-				if item.end == closeSignal {
-					close(endWatchers.s)
+				switch item := item.(type) {
+				case *notify:
+					for _, watcher := range endWatchers.getEndWatcher(item.streamID) {
+						watcher.notify(item.end)
+					}
+					notifyPool.Put(item)
+				case *closeRequest:
+					item.cb()
 					return
 				}
-				for _, watcher := range endWatchers.getEndWatcher(item.streamID) {
-					watcher.notify(item.end)
-				}
-				notifyPool.Put(item)
 			}
 		}
 	}()
 }
 
 func (endWatchers *endWatchers) close() {
-	endWatchers.notify(&notify{end: closeSignal})
-	<-endWatchers.s
+	var wg sync.WaitGroup
+	wg.Add(1)
+	endWatchers.queue.Push(&closeRequest{cb: func() {
+		wg.Done()
+	}})
+	wg.Wait()
 }
 
 func (endWatchers *endWatchers) notify(item *notify) {
-	endWatchers.l.Lock()
-	endWatchers.notifyItems = append(endWatchers.notifyItems, item)
-	endWatchers.l.Unlock()
-	endWatchers.cond.Signal()
+	endWatchers.queue.Push(item)
 }
 
 func (watcher *endWatcher) notify(pos int64) {

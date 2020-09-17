@@ -14,7 +14,8 @@
 package sstore
 
 import (
-	"encoding/json"
+	"github.com/akzj/streamIO/pkg/sstore/pb"
+	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
 	"log"
 	"os"
@@ -23,58 +24,31 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 )
 
-type appendWal struct {
-	Filename string `json:"filename"`
-}
-type deleteWal struct {
-	Filename string `json:"filename"`
-}
-
-type appendSegment struct {
-	Filename string `json:"filename"`
-}
-
-type deleteSegment struct {
-	Filename string `json:"filename"`
-}
-
-type delWalHeader struct {
-	Filename string `json:"filename"`
-}
-
 type manifest struct {
-	l              sync.RWMutex
-	maxJournalSize int64
-	journal        *journal
-	segmentDir     string
-	manifestDir    string
-	walDir         string
-	segmentIndex   int64
-	walIndex       int64
-	filesIndex     int64
-	inRecovery     bool
-
-	EntryID      int64                  `json:"entry_id"`
-	Segments     []string               `json:"segments"`
-	Journals     []string               `json:"journals"`
-	WalHeaderMap map[string]JournalMeta `json:"wal_header_map"`
-
-	notifySnap chan interface{}
-	c          chan interface{}
-	s          chan interface{}
+	*pb.ManifestSnapshot
+	l                   sync.RWMutex
+	maxJournalSize      int64
+	journal             *journal
+	segmentDir          string
+	manifestDir         string
+	journalDir          string
+	inRecovery          bool
+	notifyCompactionLog chan interface{}
+	c                   chan interface{}
+	s                   chan interface{}
 }
 
 const (
 	appendSegmentType    = iota //"appendSegment" //append segment
 	deleteSegmentType           //= "deleteSegment"
-	appendWalType               //= "appendWal"
-	deleteWalType               //= "deleteWal"
-	setWalHeaderType            //= "setWalHeader" //set journal meta
+	appendJournalType           //= "appendJournalType"
+	deleteJournalType           //= "deleteJournal"
+	setJournalHeaderType        //= "setJournalHeader" //set journal meta
 	delWalHeaderType            //= "delWalHeader" //set journal meta
 	manifestSnapshotType        //= "filesSnapshot"
+	FilesIndexType
 
 	segmentExt            = ".seg"
 	manifestExt           = ".log"
@@ -82,25 +56,25 @@ const (
 	manifestJournalExtTmp = ".mlog.tmp"
 )
 
-func openManifest(manifestDir string, segmentDir string, walDir string) (*manifest, error) {
+func openManifest(manifestDir string, segmentDir string, journalDir string) (*manifest, error) {
 	files := &manifest{
+		l:              sync.RWMutex{},
 		maxJournalSize: 128 * MB,
 		journal:        nil,
-		l:              sync.RWMutex{},
 		segmentDir:     segmentDir,
 		manifestDir:    manifestDir,
-		walDir:         walDir,
-		segmentIndex:   0,
-		walIndex:       0,
-		filesIndex:     0,
+		journalDir:     journalDir,
 		inRecovery:     false,
-		EntryID:        0,
-		Segments:       make([]string, 0, 128),
-		Journals:       make([]string, 0, 128),
-		notifySnap:     make(chan interface{}, 1),
-		c:              make(chan interface{}, 1),
-		s:              make(chan interface{}, 1),
-		WalHeaderMap:   make(map[string]JournalMeta),
+		ManifestSnapshot: &pb.ManifestSnapshot{
+			FileIndex:      &pb.FileIndex{},
+			Version:        &pb.Version{},
+			Segments:       nil,
+			Journals:       nil,
+			JournalHeaders: map[string]*pb.JournalMeta{},
+		},
+		notifyCompactionLog: make(chan interface{}, 1),
+		c:                   make(chan interface{}, 1),
+		s:                   make(chan interface{}, 1),
 	}
 	if err := files.reload(); err != nil {
 		return nil, err
@@ -112,25 +86,25 @@ func copyStrings(strings []string) []string {
 	return append(make([]string, 0, len(strings)), strings...)
 }
 
-func (f *manifest) getSegmentFiles() []string {
-	f.l.RLock()
-	defer f.l.RUnlock()
-	return copyStrings(f.Segments)
+func (m *manifest) getSegmentFiles() []string {
+	m.l.RLock()
+	defer m.l.RUnlock()
+	return copyStrings(m.Segments)
 }
 
-func (f *manifest) getWalFiles() []string {
-	f.l.RLock()
-	defer f.l.RUnlock()
-	return copyStrings(f.Journals)
+func (m *manifest) getJournalFiles() []string {
+	m.l.RLock()
+	defer m.l.RUnlock()
+	return copyStrings(m.Journals)
 }
 
-func (f *manifest) reload() error {
-	f.inRecovery = true
+func (m *manifest) reload() error {
+	m.inRecovery = true
 	defer func() {
-		f.inRecovery = false
+		m.inRecovery = false
 	}()
 	var logFiles []string
-	err := filepath.Walk(f.manifestDir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(m.manifestDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -148,115 +122,129 @@ func (f *manifest) reload() error {
 
 	sortIntFilename(logFiles)
 	if len(logFiles) == 0 {
-		f.filesIndex = 1
-		f.journal, err = openJournal(filepath.Join(f.manifestDir, "1"+manifestJournalExt))
+		m.journal, err = openJournal(filepath.Join(m.manifestDir, "1"+manifestJournalExt))
 	} else {
-		f.journal, err = openJournal(logFiles[len(logFiles)-1])
+		m.journal, err = openJournal(logFiles[len(logFiles)-1])
 		if err != nil {
 			return err
 		}
 	}
-	err = f.journal.Read(func(e *entry) error {
-		f.EntryID = e.ID
-		switch e.StreamID {
+	err = m.journal.Range(func(entry *pb.Entry) error {
+		m.Version = entry.Ver
+		switch entry.StreamID {
 		case appendSegmentType:
-			var appendS appendSegment
-			if err := json.Unmarshal(e.data, &appendS); err != nil {
+			var appendS pb.AppendSegment
+			if err := proto.Unmarshal(entry.Data, &appendS); err != nil {
 				return errors.WithStack(err)
 			}
-			return f.appendSegment(appendS)
+			return m.appendSegment(&appendS)
 		case deleteSegmentType:
-			var deleteS deleteSegment
-			if err := json.Unmarshal(e.data, &deleteS); err != nil {
+			var deleteS pb.DeleteSegment
+			if err := proto.Unmarshal(entry.Data, &deleteS); err != nil {
 				return errors.WithStack(err)
 			}
-			return f.deleteSegment(deleteS)
-		case appendWalType:
-			var appendW appendWal
-			if err := json.Unmarshal(e.data, &appendW); err != nil {
+			return m.deleteSegment(&deleteS)
+		case appendJournalType:
+			var message pb.AppendJournal
+			if err := proto.Unmarshal(entry.Data, &message); err != nil {
 				return errors.WithStack(err)
 			}
-			return f.appendWal(appendW)
-		case deleteWalType:
-			var deleteW deleteWal
-			if err := json.Unmarshal(e.data, &deleteW); err != nil {
+			return m.AppendJournal(&message)
+		case deleteJournalType:
+			var message pb.DeleteJournal
+			if err := proto.Unmarshal(entry.Data, &message); err != nil {
 				return errors.WithStack(err)
 			}
-			return f.deleteWal(deleteW)
+			return m.deleteJournal(&message)
 		case manifestSnapshotType:
-			if err := json.Unmarshal(e.data, f); err != nil {
+			if err := proto.Unmarshal(entry.Data, m); err != nil {
 				return errors.WithStack(err)
 			}
-		case setWalHeaderType:
-			var header JournalMeta
-			if err := json.Unmarshal(e.data, &header); err != nil {
+		case setJournalHeaderType:
+			var header pb.JournalMeta
+			if err := proto.Unmarshal(entry.Data, &header); err != nil {
 				return errors.WithStack(err)
 			}
-			return f.setWalHeader(header)
+			return m.setJournalHeader(&header)
+		case FilesIndexType:
+			var fileIndex pb.FileIndex
+			if err := proto.Unmarshal(entry.Data, &fileIndex); err != nil {
+				return errors.WithStack(err)
+			}
+			m.FileIndex = &fileIndex
+		case delWalHeaderType:
+			var message pb.DelJournalHeader
+			if err := proto.Unmarshal(entry.Data, &message); err != nil {
+				return err
+			}
+			return m.delWalHeader(&message)
 		default:
-			log.Fatalf("unknown type %d", e.StreamID)
+			log.Fatalf("unknown type %d", entry.StreamID)
 		}
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	if len(f.Segments) > 0 {
-		sortIntFilename(f.Segments)
-		f.segmentIndex, err = parseFilenameIndex(f.Segments[len(f.Segments)-1])
-		if err != nil {
-			return errors.WithStack(err)
-		}
-	}
-	if len(f.Journals) > 0 {
-		sortIntFilename(f.Journals)
-		f.walIndex, err = parseFilenameIndex(f.Journals[len(f.Journals)-1])
-		if err != nil {
-			return errors.WithStack(err)
-		}
-	}
-	if len(logFiles) > 0 {
-		for _, filename := range logFiles[:len(logFiles)-1] {
-			if err := os.Remove(filename); err != nil {
-				return errors.WithStack(err)
-			}
-		}
-		f.filesIndex, err = parseFilenameIndex(logFiles[len(logFiles)-1])
-		if err != nil {
-			return errors.WithStack(err)
-		}
-	}
 	return nil
 }
 
-func (f *manifest) getNextSegment() string {
-	atomic.AddInt64(&f.segmentIndex, 1)
-	return filepath.Join(f.segmentDir, strconv.FormatInt(f.segmentIndex, 10)+segmentExt)
+func (m *manifest) getSegmentIndex() int64 {
+	m.l.Lock()
+	defer m.l.Unlock()
+	return m.FileIndex.SegmentIndex
 }
 
-func (f *manifest) makeSnapshot() {
-	f.l.Lock()
-	defer f.l.Unlock()
-	if f.journal.Size() < f.maxJournalSize {
+func (m *manifest) setSegmentIndex(segmentIndex int64) error {
+	m.l.Lock()
+	defer m.l.Unlock()
+	if m.FileIndex.SegmentIndex < segmentIndex {
+		m.FileIndex.SegmentIndex = segmentIndex
+	} else {
+		return errors.New("error segment index")
+	}
+	return m.writeFilesIndex()
+}
+
+func (m *manifest) getNextSegment() (string, error) {
+	m.l.Lock()
+	defer m.l.Unlock()
+	m.FileIndex.SegmentIndex++
+	if err := m.writeFilesIndex(); err != nil {
+		return "", err
+	}
+	return filepath.Join(m.segmentDir, strconv.FormatInt(m.FileIndex.SegmentIndex, 10)+segmentExt), nil
+}
+
+func (m *manifest) compactionLog() {
+	m.l.Lock()
+	defer m.l.Unlock()
+	if m.journal.Size() < m.maxJournalSize {
 		return
 	}
-	f.filesIndex++
-	f.EntryID++
-	tmpJournal := strconv.FormatInt(f.filesIndex, 10) + manifestJournalExtTmp
-	tmpJournal = filepath.Join(f.manifestDir, tmpJournal)
+	m.FileIndex.SegmentIndex++
+	m.Version.Index++
+	tmpJournal := strconv.FormatInt(m.FileIndex.SegmentIndex, 10) + manifestJournalExtTmp
+	tmpJournal = filepath.Join(m.manifestDir, tmpJournal)
 	journal, err := openJournal(tmpJournal)
 	if err != nil {
 		log.Fatal(err)
 	}
-	data, err := json.Marshal(f)
+	data, err := proto.Marshal(m.ManifestSnapshot)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := journal.Write(&entry{
-		ID:   f.EntryID,
-		StreamID: manifestSnapshotType,
-		data: data,
-		cb:   nil,
+	if err := journal.Write(&WriteRequest{
+		Entry: &pb.Entry{
+			StreamID: manifestSnapshotType,
+			Offset:   0,
+			Data:     data,
+			Ver:      m.Version,
+		},
+		close: false,
+		end:   0,
+		err:   nil,
+		cb:    nil,
 	}); err != nil {
 		log.Fatal(err)
 	}
@@ -270,48 +258,48 @@ func (f *manifest) makeSnapshot() {
 	if err := os.Rename(tmpJournal, filename); err != nil {
 		log.Fatal(err)
 	}
-	if err := f.journal.Flush(); err != nil {
+	if err := m.journal.Flush(); err != nil {
 		log.Fatal(err)
 	}
-	if err := f.journal.Close(); err != nil {
+	if err := m.journal.Close(); err != nil {
 		log.Fatal(err)
 	}
-	if err := os.Remove(f.journal.Filename()); err != nil {
+	if err := os.Remove(m.journal.Filename()); err != nil {
 		log.Fatal(err)
 	}
-	f.journal, err = openJournal(filename)
+	m.journal, err = openJournal(filename)
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-func (f *manifest) appendWal(appendW appendWal) error {
-	f.l.Lock()
-	defer f.l.Unlock()
-	filename := filepath.Base(appendW.Filename)
-	for _, file := range f.Journals {
+func (m *manifest) AppendJournal(appendJournal *pb.AppendJournal) error {
+	m.l.Lock()
+	defer m.l.Unlock()
+	filename := filepath.Base(appendJournal.Filename)
+	for _, file := range m.Journals {
 		if file == filename {
 			return errors.Errorf("journal filename repeated")
 		}
 	}
-	f.Journals = append(f.Journals, filename)
-	sortIntFilename(f.Journals)
-	if f.inRecovery {
+	m.Journals = append(m.Journals, filename)
+	sortIntFilename(m.Journals)
+	if m.inRecovery {
 		return nil
 	}
-	data, _ := json.Marshal(appendW)
-	return f.writeEntry(appendWalType, data)
+	data, _ := proto.Marshal(appendJournal)
+	return m.writeEntry(appendJournalType, data)
 }
 
-func (f *manifest) deleteWal(deleteW deleteWal) error {
-	f.l.Lock()
-	defer f.l.Unlock()
-	filename := filepath.Base(deleteW.Filename)
+func (m *manifest) deleteJournal(deleteJournal *pb.DeleteJournal) error {
+	m.l.Lock()
+	defer m.l.Unlock()
+	filename := filepath.Base(deleteJournal.Filename)
 	var find = false
-	for index, file := range f.Journals {
+	for index, file := range m.Journals {
 		if file == filename {
-			copy(f.Journals[index:], f.Journals[index+1:])
-			f.Journals = f.Journals[:len(f.Journals)-1]
+			copy(m.Journals[index:], m.Journals[index+1:])
+			m.Journals = m.Journals[:len(m.Journals)-1]
 			find = true
 			break
 		}
@@ -319,76 +307,76 @@ func (f *manifest) deleteWal(deleteW deleteWal) error {
 	if find == false {
 		return errors.Errorf("no find journal file [%s]", filename)
 	}
-	if f.inRecovery {
+	if m.inRecovery {
 		return nil
 	}
-	data, _ := json.Marshal(deleteW)
-	return f.writeEntry(deleteWalType, data)
+	data, _ := proto.Marshal(deleteJournal)
+	return m.writeEntry(deleteJournalType, data)
 }
 
-func (f *manifest) appendSegment(appendS appendSegment) error {
-	f.l.Lock()
-	defer f.l.Unlock()
+func (m *manifest) appendSegment(appendS *pb.AppendSegment) error {
+	m.l.Lock()
+	defer m.l.Unlock()
 	filename := filepath.Base(appendS.Filename)
-	for _, file := range f.Segments {
+	for _, file := range m.Segments {
 		if file == filename {
 			return errors.Errorf("segment filename repeated")
 		}
 	}
-	f.Segments = append(f.Segments, filename)
-	sortIntFilename(f.Segments)
-	if f.inRecovery {
+	m.Segments = append(m.Segments, filename)
+	sortIntFilename(m.Segments)
+	if m.inRecovery {
 		return nil
 	}
-	data, _ := json.Marshal(appendS)
-	return f.writeEntry(appendSegmentType, data)
+	data, _ := proto.Marshal(appendS)
+	return m.writeEntry(appendSegmentType, data)
 }
 
-func (f *manifest) setWalHeader(header JournalMeta) error {
-	f.l.Lock()
-	defer f.l.Unlock()
-	f.WalHeaderMap[filepath.Base(header.Filename)] = header
-	if f.inRecovery {
+func (m *manifest) setJournalHeader(header *pb.JournalMeta) error {
+	m.l.Lock()
+	defer m.l.Unlock()
+	m.JournalHeaders[filepath.Base(header.Filename)] = header
+	if m.inRecovery {
 		return nil
 	}
-	data, _ := json.Marshal(header)
-	return f.writeEntry(setWalHeaderType, data)
+	data, _ := proto.Marshal(header)
+	return m.writeEntry(setJournalHeaderType, data)
 }
 
-func (f *manifest) getWalHeader(filename string) (JournalMeta, error) {
-	f.l.Lock()
-	defer f.l.Unlock()
-	header, ok := f.WalHeaderMap[filename]
+func (m *manifest) getJournalHeader(filename string) (*pb.JournalMeta, error) {
+	m.l.Lock()
+	defer m.l.Unlock()
+	header, ok := m.JournalHeaders[filename]
 	if !ok {
 		return header, errors.Errorf("no find meta [%s]", filename)
 	}
 	return header, nil
 }
 
-func (f *manifest) delWalHeader(header delWalHeader) error {
-	f.l.Lock()
-	defer f.l.Unlock()
-	_, ok := f.WalHeaderMap[filepath.Base(header.Filename)]
+func (m *manifest) delWalHeader(header *pb.DelJournalHeader) error {
+	m.l.Lock()
+	defer m.l.Unlock()
+	_, ok := m.JournalHeaders[filepath.Base(header.Filename)]
 	if ok == false {
 		return errors.Errorf("no find journal [%s]", header.Filename)
 	}
-	delete(f.WalHeaderMap, filepath.Base(header.Filename))
-	if f.inRecovery {
+	delete(m.JournalHeaders, filepath.Base(header.Filename))
+	if m.inRecovery {
 		return nil
 	}
-	data, _ := json.Marshal(header)
-	return f.writeEntry(delWalHeaderType, data)
+	data, _ := proto.Marshal(header)
+	return m.writeEntry(delWalHeaderType, data)
 }
 
-func (f *manifest) deleteSegment(deleteS deleteSegment) error {
-	f.l.Lock()
-	defer f.l.Unlock()
+func (m *manifest) deleteSegment(deleteS *pb.DeleteSegment) error {
+	m.l.Lock()
+	defer m.l.Unlock()
 	filename := filepath.Base(deleteS.Filename)
 	var find = false
-	for index, file := range f.Segments {
+	for index, file := range m.Segments {
 		if file == filename {
-			copy(f.Segments[index:], f.Segments[index+1:])
-			f.Segments = f.Segments[:len(f.Segments)-1]
+			copy(m.Segments[index:], m.Segments[index+1:])
+			m.Segments = m.Segments[:len(m.Segments)-1]
 			find = true
 			break
 		}
@@ -396,65 +384,83 @@ func (f *manifest) deleteSegment(deleteS deleteSegment) error {
 	if find == false {
 		return errors.Errorf("no find segment [%s]", filename)
 	}
-	if f.inRecovery {
+	if m.inRecovery {
 		return nil
 	}
-	data, _ := json.Marshal(deleteS)
-	return f.writeEntry(deleteSegmentType, data)
+	data, _ := proto.Marshal(deleteS)
+	return m.writeEntry(deleteSegmentType, data)
 }
 
-func (f *manifest) writeEntry(typ int64, data []byte, ) error {
-	f.EntryID++
-	if err := f.journal.Write(&entry{
-		ID:   f.EntryID,
-		StreamID: typ,
-		data: data,
+func (m *manifest) writeEntry(typ int64, data []byte, ) error {
+	m.Version.Index++
+	if err := m.journal.Write(&WriteRequest{
+		Entry: &pb.Entry{
+			StreamID: typ,
+			Offset:   0,
+			Data:     data,
+			Ver:      m.Version,
+		},
+		close: false,
+		end:   0,
+		err:   nil,
+		cb:    nil,
 	}); err != nil {
 		return err
 	}
-	if err := f.journal.Flush(); err != nil {
+	if err := m.journal.Flush(); err != nil {
 		return err
 	}
-	if f.journal.Size() > f.maxJournalSize {
-		f.notifySnapshot()
+	if m.journal.Size() > m.maxJournalSize {
+		m.tryCompactionLog()
 	}
 	return nil
 }
 
-func (f *manifest) notifySnapshot() {
+func (m *manifest) tryCompactionLog() {
 	select {
-	case f.notifySnap <- struct{}{}:
+	case m.notifyCompactionLog <- struct{}{}:
 	default:
 	}
 }
 
-func (f *manifest) close() {
-	f.l.Lock()
-	defer f.l.Unlock()
-	_ = f.journal.Close()
-	close(f.c)
-	<-f.s
+func (m *manifest) close() {
+	m.l.Lock()
+	defer m.l.Unlock()
+	_ = m.journal.Close()
+	close(m.c)
+	<-m.s
 }
 
-func (f *manifest) start() {
+func (m *manifest) start() {
 	go func() {
 		for {
 			select {
-			case <-f.c:
-				close(f.s)
+			case <-m.c:
+				close(m.s)
 				return
-			case <-f.notifySnap:
-				f.makeSnapshot()
+			case <-m.notifyCompactionLog:
+				m.compactionLog()
 			}
 		}
 	}()
 }
 
-func (f *manifest) getNextWal() string {
-	f.l.Lock()
-	f.l.Unlock()
-	f.walIndex++
-	return filepath.Join(f.walDir, strconv.FormatInt(f.walIndex, 10)+manifestExt)
+func (m *manifest) writeFilesIndex() error {
+	data, err := proto.Marshal(m.FileIndex)
+	if err != nil {
+		panic(err)
+	}
+	return m.writeEntry(FilesIndexType, data)
+}
+
+func (m *manifest) geNextJournal() (string, error) {
+	m.l.Lock()
+	defer m.l.Unlock()
+	m.FileIndex.JournalIndex++
+	if err := m.writeFilesIndex(); err != nil {
+		return "", err
+	}
+	return filepath.Join(m.journalDir, strconv.FormatInt(m.FileIndex.JournalIndex, 10)+manifestExt), nil
 }
 
 func parseFilenameIndex(filename string) (int64, error) {

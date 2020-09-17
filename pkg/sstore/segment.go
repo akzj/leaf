@@ -16,40 +16,46 @@ package sstore
 import (
 	"bufio"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
+	"github.com/akzj/streamIO/pkg/sstore/pb"
+	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
 	"hash/crc32"
 	"io"
-	"log"
 	"math"
 	"os"
 	"sync"
-	"time"
 )
-
-type offsetInfo struct {
-	StreamID int64  `json:"stream_id"`
-	Begin    int64  `json:"begin"`
-	Offset   int64  `json:"offset"`
-	End      int64  `json:"end"`
-	CRC      uint32 `json:"crc"`
-}
-
-type segmentMeta struct {
-	Ver         Version               `json:"ver"`
-	GcTS        time.Time             `json:"gc_ts"`
-	LastEntryID int64                 `json:"last_entry_id"`
-	OffSetInfos map[int64]offsetInfo `json:"offset_infos"`
-}
 
 type segment struct {
 	*ref
-	filename string
-	f        *os.File
-	meta     *segmentMeta
-	l        *sync.RWMutex
-	delete   bool
+	filename     string
+	f            *os.File
+	meta         *pb.SegmentMeta
+	l            *sync.RWMutex
+	syncerLocker *sync.Mutex
+	delete       bool
+}
+
+func newSegment() *segment {
+	sm := &segment{
+		ref:      nil,
+		filename: "",
+		f:        nil,
+		meta: &pb.SegmentMeta{
+			From:        &pb.Version{},
+			To:          &pb.Version{},
+			CreateTS:    0,
+			OffSetInfos: map[int64]*pb.OffsetInfo{},
+		},
+		l:            new(sync.RWMutex),
+		syncerLocker: new(sync.Mutex),
+		delete:       false,
+	}
+	sm.ref = newRef(0, func() {
+		_ = sm.close()
+	})
+	return sm
 }
 
 func createSegment(filename string) (*segment, error) {
@@ -57,18 +63,9 @@ func createSegment(filename string) (*segment, error) {
 	if err != nil {
 		return nil, err
 	}
-	segment := &segment{
-		f:        f,
-		filename: filename,
-		meta:     new(segmentMeta),
-		l:        new(sync.RWMutex),
-	}
-	segment.ref = newRef(0, func() {
-		if err := segment.close(); err != nil {
-			log.Fatal(err.Error())
-		}
-	})
-	segment.meta.OffSetInfos = make(map[int64]offsetInfo)
+	segment := newSegment()
+	segment.f = f
+	segment.filename = filename
 	return segment, nil
 }
 
@@ -77,14 +74,14 @@ func openSegment(filename string) (*segment, error) {
 	if err != nil {
 		return nil, err
 	}
-	segment := &segment{
-		ref:      nil,
-		filename: filename,
-		f:        f,
-		meta:     new(segmentMeta),
-		l:        new(sync.RWMutex),
-		delete:   false,
-	}
+	defer func() {
+		if f != nil {
+			_ = f.Close()
+		}
+	}()
+	segment := newSegment()
+	segment.filename = filename
+	segment.f = f
 	//seek to Read meta length
 	if _, err := f.Seek(-4, io.SeekEnd); err != nil {
 		return nil, errors.WithStack(err)
@@ -106,23 +103,24 @@ func openSegment(filename string) (*segment, error) {
 	if n != len(data) {
 		return nil, errors.WithMessage(io.ErrUnexpectedEOF, "Read segment head failed")
 	}
-	if err := json.Unmarshal(data, &segment.meta); err != nil {
+	if err := proto.Unmarshal(data, segment.meta); err != nil {
 		return nil, errors.WithStack(err)
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return nil, errors.WithStack(err)
 	}
-	segment.ref = newRef(0, func() {
-		if err := segment.close(); err != nil {
-			log.Fatal(err.Error())
-		}
-	})
+	f = nil
 	return segment, nil
 }
-func (s *segment) lastEntryID() int64 {
-	return s.meta.LastEntryID
+func (s *segment) FromVersion() *pb.Version {
+	return s.meta.From
 }
-func (s *segment) offsetInfo(streamID int64) (offsetInfo, error) {
+
+func (s *segment) GetSyncLocker() *sync.Mutex {
+	return s.syncerLocker
+}
+
+func (s *segment) offsetInfo(streamID int64) (*pb.OffsetInfo, error) {
 	indexInfo, ok := s.meta.OffSetInfos[streamID]
 	if ok == false {
 		return indexInfo, ErrNoFindIndexInfo
@@ -137,7 +135,7 @@ func (s *segment) Reader(streamID int64) *segmentReader {
 	}
 	return &segmentReader{
 		indexInfo: info,
-		r:         io.NewSectionReader(s.f, info.Offset, info.End),
+		r:         NewSectionReader(s.f, info.Offset, info.End-info.Begin),
 	}
 }
 
@@ -153,7 +151,7 @@ func (s *segment) flushMStreamTable(table *mStreamTable) error {
 		if err != nil {
 			return err
 		}
-		index := offsetInfo{
+		s.meta.OffSetInfos[streamID] = &pb.OffsetInfo{
 			StreamID: streamID,
 			Offset:   Offset,
 			CRC:      hash.Sum32(),
@@ -161,11 +159,14 @@ func (s *segment) flushMStreamTable(table *mStreamTable) error {
 			End:      mStream.end,
 		}
 		Offset += int64(n)
-		s.meta.OffSetInfos[streamID] = index
 	}
-	s.meta.LastEntryID = table.lastEntryID
-	s.meta.GcTS = table.GcTS
-	data, _ := json.Marshal(s.meta)
+	s.meta.From = table.from
+	s.meta.To = table.to
+	s.meta.CreateTS = table.CreateTS.Unix()
+	data, err := proto.Marshal(s.meta)
+	if err != nil {
+		return err
+	}
 	if _, err := writer.Write(data); err != nil {
 		return err
 	}
@@ -206,9 +207,76 @@ func (s *segment) close() error {
 	return nil
 }
 
+// NewSectionReader returns a SectionReader that reads from r
+// starting at offset off and stops with EOF after n bytes.
+func NewSectionReader(r io.ReaderAt, off int64, n int64) *SectionReader {
+	return &SectionReader{r, off, off, off + n}
+}
+
+// SectionReader implements Read, Seek, and ReadAt on a section
+// of an underlying ReaderAt.
+type SectionReader struct {
+	r     io.ReaderAt
+	base  int64
+	off   int64
+	limit int64
+}
+
+func (s *SectionReader) Read(p []byte) (n int, err error) {
+	if s.off >= s.limit {
+		return 0, io.EOF
+	}
+	if max := s.limit - s.off; int64(len(p)) > max {
+		p = p[0:max]
+	}
+	n, err = s.r.ReadAt(p, s.off)
+	s.off += int64(n)
+	return
+}
+
+var errWhence = errors.New("Seek: invalid whence")
+var errOffset = errors.New("Seek: invalid offset")
+
+func (s *SectionReader) Seek(offset int64, whence int) (int64, error) {
+	switch whence {
+	default:
+		return 0, errWhence
+	case io.SeekStart:
+		offset += s.base
+	case io.SeekCurrent:
+		offset += s.off
+	case io.SeekEnd:
+		offset += s.limit
+	}
+	if offset < s.base {
+		return 0, errOffset
+	}
+	s.off = offset
+	return offset - s.base, nil
+}
+
+func (s *SectionReader) ReadAt(p []byte, off int64) (n int, err error) {
+	if off < 0 || off >= s.limit-s.base {
+		return 0, io.EOF
+	}
+	off += s.base
+	if max := s.limit - off; int64(len(p)) > max {
+		p = p[0:max]
+		n, err = s.r.ReadAt(p, off)
+		if err == nil {
+			err = io.EOF
+		}
+		return n, err
+	}
+	return s.r.ReadAt(p, off)
+}
+
+// Size returns the size of the section in bytes.
+func (s *SectionReader) Size() int64 { return s.limit - s.base }
+
 type segmentReader struct {
-	indexInfo offsetInfo
-	r         *io.SectionReader
+	indexInfo *pb.OffsetInfo
+	r         *SectionReader
 }
 
 func (s *segmentReader) Seek(offset int64, whence int) (int64, error) {
@@ -222,15 +290,20 @@ func (s *segmentReader) Seek(offset int64, whence int) (int64, error) {
 func (s *segmentReader) ReadAt(p []byte, offset int64) (n int, err error) {
 	if offset < s.indexInfo.Begin || offset >= s.indexInfo.End {
 		return 0, errors.Wrapf(ErrOffset,
-			fmt.Sprintf("offset[%d] begin[%d] end[%d]",
-				offset, s.indexInfo.Begin, s.indexInfo.End))
+			fmt.Sprintf("offset[%d] begin[%d] end[%d]", offset, s.indexInfo.Begin, s.indexInfo.End))
 	}
 	size := s.indexInfo.End - offset
 	if int64(len(p)) > size {
 		p = p[:size]
 	}
 	offset = offset - s.indexInfo.Begin
-	return s.r.ReadAt(p, offset)
+	n, err = s.r.ReadAt(p, offset)
+	if err == io.EOF {
+		if n != 0 {
+			return n, nil
+		}
+	}
+	return n, err
 }
 
 func (s *segmentReader) Read(p []byte) (n int, err error) {

@@ -21,8 +21,10 @@ import (
 type Options struct {
 	MetaServerAddr        string        `json:"meta_server_addr"`
 	ServerID              int64         `json:"server_id"`
-	Host                  string        `json:"grpc_bind_addr"`
-	GRPCPort              int           `json:"grpc_port"`
+	Host                  string        `json:"host"`
+	StreamPort            int           `json:"stream_port"`
+	SyncPort              int           `json:"sync_port"`
+	SyncFrom              string        `json:"sync_from"`
 	SStorePath            string        `json:"store_path"`
 	LogPath               string        `json:"log_path"`
 	AutoAddServer         bool          `json:"auto_add_server"`
@@ -36,7 +38,9 @@ func DefaultOptions() Options {
 		MetaServerAddr:        "127.0.0.1:5000",
 		ServerID:              1,
 		Host:                  "127.0.0.1",
-		GRPCPort:              7000,
+		StreamPort:            7000,
+		SyncPort:              9000,
+		SyncFrom:              "",
 		SStorePath:            "sstore",
 		LogPath:               "log/stream-server.log",
 		AutoAddServer:         true,
@@ -86,7 +90,12 @@ func (option Options) WithDialMetaServerTimeout(val time.Duration) Options {
 	return option
 }
 
-func (option Options) WithGRPCPort(val int) Options {
-	option.GRPCPort = val
+func (option Options) WithStreamPort(val int) Options {
+	option.StreamPort = val
+	return option
+}
+
+func (option Options) WithSyncPort(val int) Options {
+	option.SyncPort = val
 	return option
 }

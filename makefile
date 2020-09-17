@@ -30,4 +30,5 @@ build-mqtt-broker:
 	@go build -o bin/mqtt-broker cmd/mqtt-broker/mqtt-broker.go
 
 generate:
-	@cd .. && protoc --go_out=plugins=grpc:. streamIO/proto/*.proto
+	@cd .. && protoc --go_out=plugins=grpc:. streamIO/proto/*.proto &&\
+protoc --go_out=plugins=grpc:. streamIO/pkg/sstore/pb/*.proto && cd -

@@ -7,6 +7,7 @@ require (
 	github.com/akzj/mmdb v0.2.0
 	github.com/dgraph-io/badger v1.6.1
 	github.com/eclipse/paho.mqtt.golang v1.2.0
+	github.com/edsrzf/mmap-go v1.0.0
 	github.com/fatih/color v1.9.0
 	github.com/golang/protobuf v1.4.2
 	github.com/google/btree v1.0.0

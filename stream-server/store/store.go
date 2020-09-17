@@ -34,7 +34,8 @@ type StreamStat struct {
 }
 
 func OpenStore(path string) (*Store, error) {
-	sstore, err := sstore.Open(sstore.DefaultOptions(path))
+	sstore, err := sstore.Open(sstore.DefaultOptions(path).
+		WithMaxWalSize(8 * sstore.MB).WithMaxMStreamTableSize(4 * sstore.MB))
 	if err != nil {
 		log.Warningf("sstore open %s failed %+v", path, err)
 		return nil, err
@@ -44,7 +45,11 @@ func OpenStore(path string) (*Store, error) {
 	}, nil
 }
 
-func (store *Store) WriteRequest(request *proto.WriteStreamRequest, callback func(offset int64, err error)) {
+func (store *Store) GetSStore() *sstore.SStore {
+	return store.sstore
+}
+
+func (store *Store) WriteRequest(request *proto.WriteStreamEntry, callback func(offset int64, err error)) {
 	store.sstore.AsyncAppend(request.StreamId, request.Data, request.Offset, callback)
 }
 

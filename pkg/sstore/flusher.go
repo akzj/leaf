@@ -13,8 +13,6 @@
 
 package sstore
 
-import "fmt"
-
 type flusher struct {
 	files *manifest
 	items chan func()
@@ -38,12 +36,11 @@ func (flusher *flusher) append(table *mStreamTable, cb func(segment string, err 
 }
 
 func (flusher *flusher) flushMStreamTable(table *mStreamTable) (string, error) {
-	var filename = flusher.files.getNextSegment()
+	var filename, _ = flusher.files.getNextSegment()
 	segment, err := createSegment(filename)
 	if err != nil {
 		return "", err
 	}
-	fmt.Println("start flush segment:" + filename)
 	if err := segment.flushMStreamTable(table); err != nil {
 		return "", err
 	}

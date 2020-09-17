@@ -13,35 +13,33 @@
 
 package sstore
 
-import "fmt"
+import (
+	"github.com/akzj/streamIO/pkg/block-queue"
+)
 
 type cbWorker struct {
-	queue *entryQueue
+	queue *block_queue.Queue
 }
 
-func newCbWorker(queue *entryQueue) *cbWorker {
+func newCbWorker(queue *block_queue.Queue) *cbWorker {
 	return &cbWorker{queue: queue}
 }
 
 func (worker *cbWorker) start() {
 	go func() {
 		for {
-			entries := worker.queue.take()
-			for index := range entries {
-				e := entries[index]
-				if e.ID == closeSignal {
-					e.cb(0, nil)
+			items := worker.queue.PopAll(nil)
+			for index := range items {
+				item := items[index]
+				items[index] = nil
+				switch request := item.(type) {
+				case *WriteRequest:
+					request.cb(request.end, request.err)
+				case *closeRequest:
+					request.cb()
 					return
 				}
-				if e == nil {
-					panic(e)
-				}
-				if e.cb == nil {
-					panic(fmt.Sprintf("entry.ID %d entry.streamID%d", e.ID, e.StreamID))
-				}
-				e.cb(e.end, e.err)
 			}
-			entriesPool.Put(entries[:0])
 		}
 	}()
 }

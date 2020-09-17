@@ -14,30 +14,33 @@
 package sstore
 
 import (
+	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"sync"
 	"time"
 )
 
 type mStreamTable struct {
-	locker      sync.Mutex
-	mSize       int64
-	lastEntryID int64
-	endMap      *int64LockMap
-	GcTS        time.Time
-	mStreams    map[int64]*mStream
-	indexTable  *indexTable
-	blockSize   int
+	locker    sync.Mutex
+	mSize     int64
+	from      *pb.Version // first version
+	to        *pb.Version //last version, include
+	endMap    *int64LockMap
+	CreateTS  time.Time
+	mStreams  map[int64]*mStream
+	blockSize int
 }
 
 func newMStreamTable(sizeMap *int64LockMap,
 	blockSize int, mStreamMapSize int) *mStreamTable {
 	return &mStreamTable{
-		blockSize:   blockSize,
-		mSize:       0,
-		lastEntryID: 0,
-		endMap:      sizeMap,
-		locker:      sync.Mutex{},
-		mStreams:    make(map[int64]*mStream, mStreamMapSize),
+		locker:    sync.Mutex{},
+		mSize:     0,
+		from:      nil,
+		to:        nil,
+		endMap:    sizeMap,
+		CreateTS:  time.Now(),
+		mStreams:  make(map[int64]*mStream, mStreamMapSize),
+		blockSize: blockSize,
 	}
 }
 
@@ -55,16 +58,19 @@ func (m *mStreamTable) loadOrCreateMStream(streamID int64) (*mStream, bool) {
 	return ms, false
 }
 
-//appendEntry append entry mStream,and return the mStream if it created
-func (m *mStreamTable) appendEntry(e *entry) (*mStream, int64) {
-	ms, load := m.loadOrCreateMStream(e.StreamID)
-	end := ms.write(e.Offset, e.data)
+//appendEntry append WriteRequest mStream,and return the mStream if it created
+func (m *mStreamTable) appendEntry(e *WriteRequest) (*mStream, int64) {
+	ms, load := m.loadOrCreateMStream(e.Entry.StreamID)
+	end := ms.write(e.Entry.Offset, e.Entry.Data)
 	if end == -1 {
 		return nil, -1
 	}
-	m.endMap.set(e.StreamID, end, e.ver)
-	m.mSize += int64(len(e.data))
-	m.lastEntryID = e.ID
+	m.endMap.set(e.Entry.StreamID, end, e.Entry.Ver)
+	m.mSize += int64(len(e.Entry.Data))
+	m.to = e.Entry.Ver
+	if m.from == nil {
+		m.from = e.Entry.Ver
+	}
 	if load {
 		return nil, end
 	}

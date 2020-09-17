@@ -16,20 +16,30 @@ syntax = "proto3";
 package proto;
 option go_package = "github.com/akzj/streamIO/proto;proto";
 
+import "google/protobuf/empty.proto";
+import "streamIO/pkg/sstore/pb/sstore.proto";
+
 //stream operator
 
-message WriteStreamRequest{
+message WriteStreamEntry{
   int64 stream_id = 1;
   int64 offset = 2;
   bytes data = 3;
   int64 request_id = 4;
 }
-
-message WriteStreamResponse{
+message WriteStreamResult{
   int64 stream_id = 1;
   int64 offset = 2;
   int64 request_id = 3;
   string err = 4;
+}
+
+message WriteStreamRequest{
+  repeated WriteStreamEntry entries = 1;
+}
+
+message WriteStreamResponse{
+  repeated WriteStreamResult results = 1;
 }
 
 message ReadStreamRequest {
@@ -56,8 +66,17 @@ message GetStreamStatResponse{
   int64 end = 3;
 }
 
+//SyncFromResponse make stream-server sync other stream-server,like master/slave
+message SyncFromRequest {
+  string addr = 1;
+}
+
+message GetStreamStoreVersionRequest{}
+
 service stream_service{
   rpc WriteStream(stream WriteStreamRequest)returns(stream WriteStreamResponse){}
   rpc ReadStream(ReadStreamRequest)returns(stream ReadStreamResponse){}
   rpc GetStreamStat(GetStreamStatRequest)returns(GetStreamStatResponse){}
+  rpc StartSyncFrom(SyncFromRequest)returns (google.protobuf.Empty){}
+  rpc GetStreamStoreVersion(GetStreamStoreVersionRequest)returns (pb.Version){}
 }
