@@ -90,4 +90,10 @@ func TestJournal(t *testing.T) {
 	t.Run("test_journal_close", func(t *testing.T) {
 		assert.NoError(t, journal.Close())
 	})
+
+	t.Run("test_journal_mmap_release", func(t *testing.T) {
+		assert.Nil(t, journal.GetJournalMMap())
+		assert.True(t, journal.JournalMMap.refCount() < 0)
+		assert.Nil(t, journal.JournalMMap.data)
+	})
 }

@@ -35,7 +35,7 @@ func (sstore *SStore) clearJournal() error {
 		return errors.Errorf("no find segment [%s]", last)
 	}
 	FromVersion := segment.FromVersion()
-	segment.refDec()
+	segment.DecRef()
 	for _, filename := range journalFiles {
 		journalFile := filepath.Join(sstore.options.JournalDir, filename)
 		header, err := sstore.manifest.getJournalHeader(filename)
@@ -78,7 +78,7 @@ func (sstore *SStore) clearSegment() error {
 		if err := sstore.committer.deleteSegment(filename); err != nil {
 			return err
 		}
-		segment.refDec()
+		segment.DecRef()
 	}
 	return nil
 }

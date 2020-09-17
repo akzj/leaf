@@ -170,7 +170,7 @@ func (index *indexTable) loadOrCreate(streamID int64, item offsetItem) (*offsetI
 
 func (index *indexTable) update1(segment *segment) error {
 	for _, it := range segment.meta.OffSetInfos {
-		segment.refInc()
+		segment.IncRef()
 		item := offsetItem{
 			segment: segment,
 			mStream: nil,
@@ -196,7 +196,7 @@ func (index *indexTable) remove1(segment *segment) error {
 				begin:   info.Begin,
 				end:     info.End,
 			})
-			segment.refDec()
+			segment.DecRef()
 			if _, ok := offsetIndex.begin(); ok == false {
 				index.removeEmptyOffsetIndex(info.StreamID)
 			}

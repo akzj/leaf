@@ -18,17 +18,17 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
+	"github.com/akzj/streamIO/pkg/utils"
 	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
 	"hash/crc32"
 	"io"
-	"math"
 	"os"
 	"sync"
 )
 
 type segment struct {
-	*ref
+	*utils.RefCount
 	filename     string
 	f            *os.File
 	meta         *pb.SegmentMeta
@@ -39,7 +39,6 @@ type segment struct {
 
 func newSegment() *segment {
 	sm := &segment{
-		ref:      nil,
 		filename: "",
 		f:        nil,
 		meta: &pb.SegmentMeta{
@@ -52,7 +51,7 @@ func newSegment() *segment {
 		syncerLocker: new(sync.Mutex),
 		delete:       false,
 	}
-	sm.ref = newRef(0, func() {
+	sm.RefCount = utils.NewRefCount(0, func() {
 		_ = sm.close()
 	})
 	return sm
@@ -308,46 +307,4 @@ func (s *segmentReader) ReadAt(p []byte, offset int64) (n int, err error) {
 
 func (s *segmentReader) Read(p []byte) (n int, err error) {
 	return s.r.Read(p)
-}
-
-type ref struct {
-	l sync.RWMutex
-	c int32
-	f func()
-}
-
-func newRef(count int32, f func()) *ref {
-	return &ref{
-		c: count,
-		f: f,
-	}
-}
-
-func (ref *ref) refCount() int32 {
-	ref.l.Lock()
-	c := ref.c
-	ref.l.Unlock()
-	return c
-}
-
-func (ref *ref) refDec() int32 {
-	ref.l.Lock()
-	defer ref.l.Unlock()
-	if ref.c <= 0 {
-		panic(fmt.Errorf("ref.c %d error", ref.c))
-	}
-	ref.c -= 1
-	if ref.c == 0 {
-		ref.c = math.MinInt32
-		go ref.f()
-		return 0
-	}
-	return ref.c
-}
-
-func (ref *ref) refInc() int32 {
-	ref.l.Lock()
-	defer ref.l.Unlock()
-	ref.c += 1
-	return ref.c
 }

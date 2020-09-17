@@ -83,12 +83,12 @@ func (syncer *Syncer) deleteJournal(filename string) {
 	defer syncer.journalLocker.Unlock()
 	for index, journal := range syncer.journals {
 		if journal.filename == filename {
-			journal.ref.f = func() {
+			journal.RefCount.SetReleaseFunc(func(){
 				if err := os.Remove(journal.filename); err != nil {
 					fmt.Println(err)
 				}
-			}
-			journal.refDec()
+			})
+			journal.DecRef()
 			syncer.journals = append(syncer.journals[:index], syncer.journals[index+1:]...)
 			break
 		}
@@ -104,7 +104,7 @@ func (syncer *Syncer) deleteSubscriber(serviceID int64) {
 func (syncer *Syncer) syncJournal(ctx context.Context, index *int64,
 	journal *journal, f func(callback SyncCallback) error) error {
 
-	defer journal.refDec()
+	defer journal.DecRef()
 	begin, err := journal.index.find(atomic.LoadInt64(index))
 	if err != nil {
 		panic(err)
@@ -113,7 +113,7 @@ func (syncer *Syncer) syncJournal(ctx context.Context, index *int64,
 	var reader io.Reader
 	journalMMap := journal.GetJournalMMap()
 	if journalMMap != nil {
-		defer journalMMap.refDec()
+		defer journalMMap.DecRef()
 		bufReader := bytes.NewReader(journalMMap.data[:mmapSize])
 		if _, err := bufReader.Seek(begin.Offset, io.SeekStart); err != nil {
 			return err
@@ -205,7 +205,7 @@ func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f 
 			if index >= journalIter.meta.From.Index && index <= journalIter.GetFlushIndex() {
 				fmt.Println("find", journalIter.meta, "flushIndex", journalIter.GetFlushIndex(), "index", index)
 				journal = journalIter
-				journal.refInc()
+				journal.IncRef()
 				break
 			}
 		}
@@ -300,13 +300,13 @@ func (syncer *Syncer) pushEntryLoop() {
 func (syncer *Syncer) OpenSegmentReader(segment *segment) (*SegmentReader, error) {
 	f, err := os.Open(segment.filename)
 	if err != nil {
-		segment.refDec()
+		segment.DecRef()
 		return nil, errors.WithStack(err)
 	}
 	return &SegmentReader{
 		f: f,
 		release: func() {
-			segment.refDec()
+			segment.DecRef()
 		},
 	}, nil
 }

@@ -16,7 +16,9 @@ package sstore
 import (
 	"bufio"
 	"encoding/binary"
+	"fmt"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
+	"github.com/akzj/streamIO/pkg/utils"
 	"github.com/edsrzf/mmap-go"
 	pproto "github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
@@ -31,7 +33,7 @@ const version1 = "ver1"
 
 // write ahead log
 type journal struct {
-	*ref
+	*utils.RefCount
 	filename string
 	size     int64
 	f        *os.File
@@ -44,7 +46,7 @@ type journal struct {
 }
 
 type JournalMMap struct {
-	*ref
+	*utils.RefCount
 	data mmap.MMap
 }
 
@@ -56,13 +58,14 @@ func openJournalMMap(f *os.File) *JournalMMap {
 		panic(err)
 	}
 	jmmap := JournalMMap{
-		ref:  nil,
 		data: m[:mmapSize],
 	}
-	jmmap.ref = newRef(1, func() {
+	jmmap.RefCount = utils.NewRefCount(1, func() {
 		if err := jmmap.data.Unmap(); err != nil {
 			panic(err)
 		}
+		jmmap.data = nil
+		fmt.Println("unmap")
 	})
 	return &jmmap
 }
@@ -80,7 +83,7 @@ func OpenJournal(filename string) (*journal, error) {
 		return nil, errors.WithStack(err)
 	}
 	var w = &journal{
-		ref: newRef(1, func() {
+		RefCount: utils.NewRefCount(1, func() {
 		}),
 		filename: filename,
 		size:     stat.Size(),
@@ -174,11 +177,11 @@ func (j *journal) Close() error {
 	if err := j.f.Close(); err != nil {
 		return errors.WithStack(err)
 	}
-	j.JournalMMap.refDec()
+	j.JournalMMap.DecRef()
 	return nil
 }
 func (j *journal) GetJournalMMap() *JournalMMap {
-	if count := j.JournalMMap.refInc(); count < 0 {
+	if count := j.JournalMMap.IncRef(); count < 0 {
 		return nil
 	}
 	return j.JournalMMap
