@@ -13,30 +13,30 @@
 
 package sstore
 
+import (
+	block_queue "github.com/akzj/streamIO/pkg/block-queue"
+	log "github.com/sirupsen/logrus"
+)
+
 type flusher struct {
-	files *Manifest
-	items chan func()
-	c     chan interface{}
-	s     chan interface{}
+	manifest *Manifest
+	queue    *block_queue.QueueWithContext
 }
 
-func newFlusher(files *Manifest) *flusher {
+type flushSegment struct {
+	mStreamTable *mStreamTable
+	callback     func(filename string, err error)
+}
+
+func newFlusher(manifest *Manifest, queue *block_queue.QueueWithContext) *flusher {
 	return &flusher{
-		files: files,
-		items: make(chan func(), 1),
-		c:     make(chan interface{}, 1),
-		s:     make(chan interface{}, 1),
-	}
-}
-
-func (flusher *flusher) append(table *mStreamTable, cb func(segment string, err error)) {
-	flusher.items <- func() {
-		cb(flusher.flushMStreamTable(table))
+		manifest: manifest,
+		queue:    queue,
 	}
 }
 
 func (flusher *flusher) flushMStreamTable(table *mStreamTable) (string, error) {
-	var filename, _ = flusher.files.GetNextSegment()
+	var filename, _ = flusher.manifest.GetNextSegment()
 	segment, err := createSegment(filename)
 	if err != nil {
 		return "", err
@@ -49,21 +49,15 @@ func (flusher *flusher) flushMStreamTable(table *mStreamTable) (string, error) {
 	}
 	return filename, nil
 }
-func (flusher *flusher) close() {
-	close(flusher.c)
-	<-flusher.s
-}
 
-func (flusher *flusher) start() {
-	go func() {
-		for {
-			select {
-			case <-flusher.c:
-				close(flusher.s)
-				return
-			case f := <-flusher.items:
-				f()
-			}
+func (flusher *flusher) flushLoop() {
+	for {
+		item, err := flusher.queue.Pop()
+		if err != nil {
+			log.Warn(err)
+			return
 		}
-	}()
+		flushSegment := item.(flushSegment)
+		flushSegment.callback(flusher.flushMStreamTable(flushSegment.mStreamTable))
+	}
 }

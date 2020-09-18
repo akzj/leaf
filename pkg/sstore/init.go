@@ -25,77 +25,94 @@ import (
 )
 
 func mkdir(dir string) error {
-	f, err := os.Open(dir)
-	if err == nil {
-		_ = f.Close()
-		return nil
-	}
 	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
 		return errors.WithStack(err)
 	}
 	return nil
 }
 
+func (store *Store) gogo(f func()) {
+	store.wg.Add(1)
+	go func() {
+		defer store.wg.Done()
+		f()
+	}()
+}
+
 //init segment,journal,index
-func (sStore *SStore) init() error {
+func (store *Store) init() error {
 	for _, dir := range []string{
-		sStore.options.JournalDir,
-		sStore.options.ManifestDir,
-		sStore.options.SegmentDir} {
+		store.options.JournalDir,
+		store.options.ManifestDir,
+		store.options.SegmentDir} {
 		if err := mkdir(dir); err != nil {
 			return err
 		}
 	}
-	manifest, err := OpenManifest(sStore.options.ManifestDir,
-		sStore.options.SegmentDir,
-		sStore.options.JournalDir)
+	manifest, err := OpenManifest(store.options.ManifestDir,
+		store.options.SegmentDir,
+		store.options.JournalDir)
 	if err != nil {
 		return err
 	}
-	sStore.manifest = manifest
+	store.manifest = manifest
 
-	mStreamTable := newMStreamTable(sStore.endMap, sStore.options.BlockSize, 128)
-	commitQueue := block_queue.NewQueue(sStore.options.RequestQueueCap)
-	committer := newCommitter(sStore.options,
-		sStore.endWatchers,
-		sStore.indexTable,
-		sStore.endMap,
-		mStreamTable,
+	commitQueue := block_queue.NewQueueWithContext(store.ctx, store.options.RequestQueueCap)
+	callbackQueue := block_queue.NewQueueWithContext(store.ctx, store.options.RequestQueueCap)
+	flushSegmentQueue := block_queue.NewQueueWithContext(store.ctx, store.options.RequestQueueCap)
+	notifyQueue := block_queue.NewQueueWithContext(store.ctx, store.options.RequestQueueCap)
+	journalQueue := block_queue.NewQueueWithContext(store.ctx, store.options.RequestQueueCap)
+
+
+	store.streamWatcher = newStreamWatcher(notifyQueue)
+	store.entryQueue = journalQueue
+
+	store.indexTableUpdater = &indexTableUpdater{
+		callbackQueue: callbackQueue,
+		notifyQueue:   notifyQueue,
+		queue:         block_queue.NewQueueWithContext(store.ctx, 128),
+		indexTable:    store.indexTable,
+	}
+	store.callbackWorker = newCallbackWorker(callbackQueue)
+
+	store.committer = newCommitter(store,
 		commitQueue,
-		manifest,
-		sStore.options.BlockSize,
-		sStore)
-	sStore.committer = committer
-	sStore.syncer = newSyncer(sStore)
+		flushSegmentQueue,
+		store.indexTableUpdater.queue)
+	store.syncer = newSyncer(store)
+	store.flusher = newFlusher(manifest, flushSegmentQueue)
 
-	sStore.committer.start()
-	sStore.endWatchers.start()
-	sStore.syncer.start()
+	store.gogo(store.callbackWorker.callbackLoop)
+	store.gogo(store.flusher.flushLoop)
+	store.gogo(store.committer.processLoop)
+	store.gogo(store.streamWatcher.notifyLoop)
+	store.gogo(store.syncer.pushEntryLoop)
+	store.gogo(store.indexTableUpdater.updateLoop)
 
 	//rebuild segment index
 	segmentFiles := manifest.GetSegmentFiles()
 	sortFilename(segmentFiles)
 	for _, file := range segmentFiles {
-		segment, err := openSegment(filepath.Join(sStore.options.SegmentDir, file))
+		segment, err := openSegment(filepath.Join(store.options.SegmentDir, file))
 		if err != nil {
 			return err
 		}
 		for _, info := range segment.meta.OffSetInfos {
-			sStore.endMap.set(info.StreamID, info.End, segment.meta.To)
+			store.endMap.set(info.StreamID, info.End, segment.meta.To)
 		}
-		if sStore.version == nil {
-			sStore.version = segment.meta.To
-		} else if segment.meta.From.Index <= sStore.version.Index {
+		if store.version == nil {
+			store.version = segment.meta.To
+		} else if segment.meta.From.Index <= store.version.Index {
 			return errors.Errorf("segment meta LastEntryID[%d] error",
 				segment.meta.From.Index)
 		}
-		sStore.version = segment.meta.To
-		sStore.committer.appendSegment(file, segment)
+		store.version = segment.meta.To
+		store.appendSegment(file, segment)
 		log.Infof("segment index [%d,%d]",
 			segment.meta.From.Index, segment.meta.To.Index)
 	}
-	if sStore.version == nil {
-		sStore.version = &pb.Version{}
+	if store.version == nil {
+		store.version = &pb.Version{}
 	}
 
 	//replay entries in the journal
@@ -103,7 +120,7 @@ func (sStore *SStore) init() error {
 	journalFiles := manifest.GetJournalFiles()
 	for index, filename := range journalFiles {
 		least := filename == journalFiles[index]
-		journal, err := OpenJournal(filepath.Join(sStore.options.JournalDir, filename))
+		journal, err := OpenJournal(filepath.Join(store.options.JournalDir, filename))
 		if err != nil {
 			return err
 		}
@@ -113,23 +130,25 @@ func (sStore *SStore) init() error {
 				return err
 			}
 		} else {
-			if header.Old && header.To.Index < sStore.version.Index {
+			if header.Old && header.To.Index < store.version.Index {
 				_ = journal.Close()
 				continue
 			}
 		}
 		if err := journal.Range(func(entry *pb.Entry) error {
-			if entry.Ver.Index <= sStore.version.Index {
+			if entry.Ver.Index <= store.version.Index {
 				return nil
-			} else if entry.Ver.Index == sStore.version.Index+1 {
-				sStore.version = entry.Ver
-				committer.queue.Push(&WriteEntryRequest{
+			} else if entry.Ver.Index == store.version.Index+1 {
+				store.version = entry.Ver
+				if err := store.committer.queue.Push(&WriteEntryRequest{
 					Entry: entry,
 					cb:    func(end int64, err error) {},
-				})
+				}); err != nil {
+					log.Fatal(err)
+				}
 			} else {
 				return errors.WithMessage(ErrJournal,
-					fmt.Sprintf("entry.ID[%d] sStore.index+1[%d] %s", entry.Ver.Index, sStore.version.Index+1, filename))
+					fmt.Sprintf("entry.ID[%d] store.index+1[%d] %s", entry.Ver.Index, store.version.Index+1, filename))
 			}
 			return nil
 		}); err != nil {
@@ -137,7 +156,7 @@ func (sStore *SStore) init() error {
 			return err
 		}
 		log.Infof("journal index [%d,%d]", journal.GetMeta().From.Index, journal.GetMeta().To.Index)
-		sStore.syncer.appendJournal(journal)
+		store.syncer.appendJournal(journal)
 		if least == false {
 			if err := journal.Close(); err != nil {
 				return err
@@ -160,21 +179,27 @@ func (sStore *SStore) init() error {
 		if err := manifest.AppendJournal(&pb.AppendJournal{Filename: file}); err != nil {
 			return err
 		}
-		sStore.syncer.appendJournal(leastJournal)
+		store.syncer.appendJournal(leastJournal)
 	}
 
-	sStore.journalWriter = newJournalWriter(leastJournal, sStore.entryQueue,
-		sStore.committer.queue, sStore.syncer, sStore.manifest, sStore.options.MaxJournalSize)
-	sStore.journalWriter.start()
+	store.journalWriter = newJournalWriter(leastJournal,
+		journalQueue,
+		store.committer.queue,
+		store.syncer.queue,
+		store.syncer,
+		store.manifest,
+		store.options.MaxJournalSize)
+
+	store.gogo(store.journalWriter.writeLoop)
 
 	//clear dead journal
 	journalFiles = manifest.GetJournalFiles()
-	allJournalFiles, err := listDir(sStore.options.JournalDir, manifestExt)
+	allJournalFiles, err := listDir(store.options.JournalDir, manifestExt)
 	if err != nil {
 		return err
 	}
 	for _, filename := range diffStrings(allJournalFiles, journalFiles) {
-		if err := os.Remove(filepath.Join(sStore.options.JournalDir, filename)); err != nil {
+		if err := os.Remove(filepath.Join(store.options.JournalDir, filename)); err != nil {
 			return errors.WithStack(err)
 		}
 		fmt.Println("delete filename " + filename)
@@ -182,17 +207,39 @@ func (sStore *SStore) init() error {
 
 	//clear dead segment manifest
 	segmentFiles = manifest.GetSegmentFiles()
-	segmentFileAll, err := listDir(sStore.options.SegmentDir, segmentExt)
+	segmentFileAll, err := listDir(store.options.SegmentDir, segmentExt)
 	if err != nil {
 		return err
 	}
 	for _, filename := range diffStrings(segmentFileAll, segmentFiles) {
-		if err := os.Remove(filepath.Join(sStore.options.SegmentDir, filename)); err != nil {
+		if err := os.Remove(filepath.Join(store.options.SegmentDir, filename)); err != nil {
 			return errors.WithStack(err)
 		}
 		fmt.Println("delete filename " + filename)
 	}
 	return nil
+}
+
+type callbackWorker struct {
+	queue *block_queue.QueueWithContext
+}
+
+func newCallbackWorker(queue *block_queue.QueueWithContext) *callbackWorker {
+	return &callbackWorker{queue: queue}
+}
+
+func (worker *callbackWorker) callbackLoop() {
+	for {
+		items, err := worker.queue.PopAll(nil)
+		if err != nil {
+			log.Warn(err)
+			return
+		}
+		for _, item := range items {
+			request := item.(*WriteEntryRequest)
+			request.cb(request.end, request.err)
+		}
+	}
 }
 
 func listDir(dir string, ext string) ([]string, error) {

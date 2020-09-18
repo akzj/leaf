@@ -24,7 +24,7 @@ import (
 )
 
 type Store struct {
-	sstore *sstore.SStore
+	sstore *sstore.Store
 }
 
 type StreamStat struct {
@@ -45,7 +45,7 @@ func OpenStore(path string) (*Store, error) {
 	}, nil
 }
 
-func (store *Store) GetSStore() *sstore.SStore {
+func (store *Store) GetSStore() *sstore.Store {
 	return store.sstore
 }
 
@@ -55,7 +55,7 @@ func (store *Store) WriteRequest(request *proto.WriteStreamEntry, callback func(
 
 func (store *Store) ReadRequest(ctx context.Context, request *proto.ReadStreamRequest,
 	callback func(offset int64, data []byte) error) error {
-	var watcher sstore.Watcher
+	var watcher *sstore.Watcher
 	defer func() {
 		if watcher != nil {
 			watcher.Close()

@@ -16,12 +16,12 @@ import (
 )
 
 type Client struct {
-	sstore *sstore.SStore
+	sstore *sstore.Store
 	ctx    context.Context
 	cancel context.CancelFunc
 }
 
-func NewClient(store *sstore.SStore) *Client {
+func NewClient(store *sstore.Store) *Client {
 	return &Client{
 		sstore: store,
 		ctx:    context.Background(),

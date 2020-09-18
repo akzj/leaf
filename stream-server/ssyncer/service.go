@@ -16,10 +16,10 @@ import (
 ssyncer stream from master
 */
 type Service struct {
-	store *sstore.SStore
+	store *sstore.Store
 }
 
-func NewService(store *sstore.SStore) *Service {
+func NewService(store *sstore.Store) *Service {
 	return &Service{
 		store: store,
 	}
@@ -99,7 +99,6 @@ func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncServi
 			}
 
 			if callback.Entry != nil {
-				fmt.Println("callback entry", callback.Entry.Ver)
 				appendEntry(callback.Entry)
 				callback.Entry = nil
 			}

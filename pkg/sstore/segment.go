@@ -33,7 +33,6 @@ type segment struct {
 	f            *os.File
 	meta         *pb.SegmentMeta
 	l            *sync.RWMutex
-	syncerLocker *sync.Mutex
 	delete       bool
 }
 
@@ -48,7 +47,6 @@ func newSegment() *segment {
 			OffSetInfos: map[int64]*pb.OffsetInfo{},
 		},
 		l:            new(sync.RWMutex),
-		syncerLocker: new(sync.Mutex),
 		delete:       false,
 	}
 	sm.RefCount = utils.NewRefCount(0, func() {
@@ -115,9 +113,6 @@ func (s *segment) FromVersion() *pb.Version {
 	return s.meta.From
 }
 
-func (s *segment) GetSyncLocker() *sync.Mutex {
-	return s.syncerLocker
-}
 
 func (s *segment) offsetInfo(streamID int64) (*pb.OffsetInfo, error) {
 	indexInfo, ok := s.meta.OffSetInfos[streamID]
@@ -270,7 +265,7 @@ func (s *SectionReader) ReadAt(p []byte, off int64) (n int, err error) {
 	return s.r.ReadAt(p, off)
 }
 
-// Size returns the size of the section in bytes.
+// Size returns the end of the section in bytes.
 func (s *SectionReader) Size() int64 { return s.limit - s.base }
 
 type segmentReader struct {

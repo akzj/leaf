@@ -17,8 +17,8 @@ import (
 )
 
 type Syncer struct {
-	sstore *SStore
-	queue  *block_queue.Queue
+	sstore *Store
+	queue  *block_queue.QueueWithContext
 
 	journalLocker sync.Mutex
 	journals      []*journal
@@ -57,15 +57,15 @@ type SyncCallback struct {
 func newSubscriber(ctx context.Context, index *int64) *subscriber {
 	return &subscriber{
 		nextIndex: index,
-		bytes:     0,
+		bytes:     1024,
 		queue:     block_queue.NewQueueWithContext(ctx, 1),
 	}
 }
 
-func newSyncer(sstore *SStore) *Syncer {
+func newSyncer(sstore *Store) *Syncer {
 	return &Syncer{
 		sstore:            sstore,
-		queue:             block_queue.NewQueue(10240),
+		queue:             block_queue.NewQueueWithContext(sstore.ctx, 10240),
 		journalLocker:     sync.Mutex{},
 		journals:          nil,
 		subscribersLocker: sync.Mutex{},
@@ -83,9 +83,10 @@ func (syncer *Syncer) deleteJournal(filename string) {
 	defer syncer.journalLocker.Unlock()
 	for index, journal := range syncer.journals {
 		if journal.filename == filename {
-			journal.RefCount.SetReleaseFunc(func(){
+			journal.RefCount.SetReleaseFunc(func() {
+				_ = journal.Close()
 				if err := os.Remove(journal.filename); err != nil {
-					fmt.Println(err)
+					log.Fatal(err)
 				}
 			})
 			journal.DecRef()
@@ -140,11 +141,11 @@ func (syncer *Syncer) syncJournal(ctx context.Context, index *int64,
 	var errs = make(chan error)
 	go func() {
 		errs <- f(SyncCallback{EntryQueue: queue})
-		fmt.Println("syncJournal done ", journal.filename)
+		log.Debug("syncJournal done ", journal.filename)
 	}()
 	var count int64
 	defer func() {
-		fmt.Println("index", atomic.LoadInt64(index))
+		log.Debug("index", atomic.LoadInt64(index))
 	}()
 	for count = journal.GetFlushIndex() - atomic.LoadInt64(index); count >= 0; count-- {
 		entry, err := DecodeEntry(reader)
@@ -176,13 +177,10 @@ func (syncer *Syncer) syncJournal(ctx context.Context, index *int64,
 }
 
 func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f func(SyncCallback) error) error {
-	fmt.Println("SyncRequest", serverID, index)
+	log.Debug("SyncRequest", serverID, index)
 	//ssyncer from segment
-	segment := syncer.sstore.committer.getSegmentByIndex(index, true)
+	segment := syncer.sstore.getSegmentByIndex(index)
 	if segment != nil {
-		defer func() {
-			segment.GetSyncLocker().Unlock()
-		}()
 		reader, err := syncer.OpenSegmentReader(segment)
 		if err != nil {
 			return err
@@ -203,7 +201,7 @@ func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f 
 		syncer.journalLocker.Lock()
 		for _, journalIter := range syncer.journals {
 			if index >= journalIter.meta.From.Index && index <= journalIter.GetFlushIndex() {
-				fmt.Println("find", journalIter.meta, "flushIndex", journalIter.GetFlushIndex(), "index", index)
+				log.Debug("find", journalIter.meta, "flushIndex", journalIter.GetFlushIndex(), "index", index)
 				journal = journalIter
 				journal.IncRef()
 				break
@@ -222,7 +220,7 @@ func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f 
 			}
 		} else {
 			// ssyncer from subscriber
-			fmt.Println("add to subscriber")
+			log.Debug("add to subscriber")
 			syncer.subscribersLocker.Lock()
 			sub, ok := syncer.subscribers[serverID]
 			if ok == false {
@@ -259,7 +257,7 @@ func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f 
 					break Loop
 				} else {
 					//read from journal again
-					fmt.Println("//read from journal again")
+					log.Println("read from journal again")
 					break Loop
 				}
 			}
@@ -267,22 +265,22 @@ func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f 
 	}
 }
 
-func (syncer *Syncer) start() {
-	go syncer.pushEntryLoop()
-}
-
 var errQueueFull = errors.New("queue full error")
 
 func (syncer *Syncer) pushEntryLoop() {
 	for {
-		items := syncer.queue.PopAll(nil)
+		items, err := syncer.queue.PopAll(nil)
+		if err != nil {
+			log.Warn("syncer stop")
+			return
+		}
 		syncer.subscribersLocker.Lock()
 		if len(syncer.subscribers) == 0 {
 			syncer.subscribersLocker.Unlock()
 			continue
 		}
 		for index, sub := range syncer.subscribers {
-			remain, err := sub.queue.PushManyWithBlock(items)
+			remain, err := sub.queue.PushManyWithoutBlock(items)
 			if err != nil {
 				delete(syncer.subscribers, index)
 				continue
@@ -309,21 +307,6 @@ func (syncer *Syncer) OpenSegmentReader(segment *segment) (*SegmentReader, error
 			segment.DecRef()
 		},
 	}, nil
-}
-
-func (syncer *Syncer) Close() {
-	var wg sync.WaitGroup
-	wg.Add(1)
-	syncer.queue.Push(&CloseRequest{
-		CB: func() {
-			wg.Done()
-		},
-	})
-	wg.Wait()
-}
-
-func (syncer *Syncer) PushMany(requests []interface{}) {
-	syncer.queue.PushMany(requests)
 }
 
 func (JI *journalIndex) append(index jIndex) {

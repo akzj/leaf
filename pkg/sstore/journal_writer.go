@@ -17,29 +17,31 @@ import (
 	block_queue "github.com/akzj/streamIO/pkg/block-queue"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/pkg/errors"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"path/filepath"
-	"sync"
 )
 
 type journalWriter struct {
 	journal        *journal
-	queue          *block_queue.Queue
-	commitQueue    *block_queue.Queue
+	queue          *block_queue.QueueWithContext
+	commitQueue    *block_queue.QueueWithContext
+	syncQueue      *block_queue.QueueWithContext
 	syncer         *Syncer
 	manifest       *Manifest
 	maxJournalSize int64
 }
 
 func newJournalWriter(journal *journal,
-	queue *block_queue.Queue,
-	commitQueue *block_queue.Queue,
+	queue *block_queue.QueueWithContext,
+	commitQueue *block_queue.QueueWithContext,
+	syncQueue *block_queue.QueueWithContext,
 	syncer *Syncer,
 	files *Manifest, maxWalSize int64) *journalWriter {
 	return &journalWriter{
 		journal:        journal,
 		queue:          queue,
 		commitQueue:    commitQueue,
+		syncQueue:      syncQueue,
 		syncer:         syncer,
 		manifest:       files,
 		maxJournalSize: maxWalSize,
@@ -80,48 +82,35 @@ func (jWriter *journalWriter) createNewJournal() error {
 	return nil
 }
 
-func (jWriter *journalWriter) start() {
-	go func() {
-		for {
-			entries := jWriter.queue.PopAll(nil)
-			var writeRequests = make([]interface{}, 0, len(entries))
-			for i := range entries {
-				e := entries[i]
-				switch request := e.(type) {
-				case *WriteEntryRequest:
-					if jWriter.journal.Size() > jWriter.maxJournalSize {
-						if err := jWriter.createNewJournal(); err != nil {
-							request.cb(-1, err)
-							continue
-						}
-					}
-					if err := jWriter.journal.Write(request.Entry); err != nil {
-						request.cb(-1, err)
-					} else {
-						writeRequests = append(writeRequests, request)
-					}
-				case *CloseRequest:
-					_ = jWriter.journal.Close()
-					jWriter.commitQueue.Push(e)
-					return
+func (jWriter *journalWriter) writeLoop() {
+	log.Info("writeLoop")
+	for {
+		items, err := jWriter.queue.PopAll(nil)
+		if err != nil {
+			log.Warn(err)
+			return
+		}
+		for _, item := range items {
+			request := item.(*WriteEntryRequest)
+			if jWriter.journal.Size() > jWriter.maxJournalSize {
+				if err := jWriter.createNewJournal(); err != nil {
+					request.cb(-1, err)
+					continue
 				}
 			}
-			if len(writeRequests) > 0 {
-				if err := jWriter.journal.Flush(); err != nil {
-					log.Fatal(err.Error())
-				}
-				jWriter.commitQueue.PushMany(writeRequests)
-				jWriter.syncer.PushMany(writeRequests)
+			if err := jWriter.journal.Write(request.Entry); err != nil {
+				log.Panicf("journal.Write failed %+v\n", err)
 			}
 		}
-	}()
-}
+		if err := jWriter.journal.Flush(); err != nil {
+			log.Panicf("journal flush failed %+v\n", err)
+		}
+		if err := jWriter.commitQueue.PushMany(items); err != nil {
+			log.Fatal(err)
+		}
+		if err := jWriter.syncQueue.PushMany(items); err != nil {
+			log.Fatal(err)
+		}
 
-func (jWriter *journalWriter) close() {
-	var wg sync.WaitGroup
-	wg.Add(1)
-	jWriter.queue.Push(&CloseRequest{CB: func() {
-		wg.Done()
-	}})
-	wg.Wait()
+	}
 }

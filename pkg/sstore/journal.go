@@ -16,12 +16,12 @@ package sstore
 import (
 	"bufio"
 	"encoding/binary"
-	"fmt"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/akzj/streamIO/pkg/utils"
 	"github.com/edsrzf/mmap-go"
 	pproto "github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"io"
 	"os"
 	"path/filepath"
@@ -43,6 +43,7 @@ type journal struct {
 	flushVer unsafe.Pointer //*pb.Version
 
 	JournalMMap *JournalMMap
+	isClose     int32
 }
 
 type JournalMMap struct {
@@ -57,17 +58,18 @@ func openJournalMMap(f *os.File) *JournalMMap {
 	if err != nil {
 		panic(err)
 	}
-	jmmap := JournalMMap{
+	jMmap := JournalMMap{
 		data: m[:mmapSize],
 	}
-	jmmap.RefCount = utils.NewRefCount(1, func() {
-		if err := jmmap.data.Unmap(); err != nil {
+	filename := f.Name()
+	jMmap.RefCount = utils.NewRefCount(1, func() {
+		if err := jMmap.data.Unmap(); err != nil {
 			panic(err)
 		}
-		jmmap.data = nil
-		fmt.Println("unmap")
+		jMmap.data = nil
+		log.Debug("log journalMap unmap", filename)
 	})
-	return &jmmap
+	return &jMmap
 }
 
 func OpenJournal(filename string) (*journal, error) {
@@ -171,13 +173,15 @@ func (j *journal) Size() int64 {
 }
 
 func (j *journal) Close() error {
-	if err := j.Flush(); err != nil {
-		return errors.WithStack(err)
+	if atomic.CompareAndSwapInt32(&j.isClose, 0, 1) {
+		if err := j.Flush(); err != nil {
+			return errors.WithStack(err)
+		}
+		if err := j.f.Close(); err != nil {
+			return errors.WithStack(err)
+		}
+		j.JournalMMap.DecRef()
 	}
-	if err := j.f.Close(); err != nil {
-		return errors.WithStack(err)
-	}
-	j.JournalMMap.DecRef()
 	return nil
 }
 func (j *journal) GetJournalMMap() *JournalMMap {

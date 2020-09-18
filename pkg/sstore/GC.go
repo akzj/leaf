@@ -14,68 +14,68 @@
 package sstore
 
 import (
-	"fmt"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"path/filepath"
 )
 
 // GC will delete journal,segment
 // delete journal
 // delete segment
-func (sstore *SStore) clearJournal() error {
-	journalFiles := sstore.manifest.GetJournalFiles()
-	segmentFiles := sstore.manifest.GetSegmentFiles()
+func (store *Store) clearJournal() error {
+	journalFiles := store.manifest.GetJournalFiles()
+	segmentFiles := store.manifest.GetSegmentFiles()
 	if len(segmentFiles) == 0 {
 		return nil
 	}
 	last := segmentFiles[len(segmentFiles)-1]
-	segment := sstore.committer.getSegment(last)
+	segment := store.getSegment(last)
 	if segment == nil {
 		return errors.Errorf("no find segment [%s]", last)
 	}
 	FromVersion := segment.FromVersion()
 	segment.DecRef()
 	for _, filename := range journalFiles {
-		journalFile := filepath.Join(sstore.options.JournalDir, filename)
-		header, err := sstore.manifest.GetJournalMeta(filename)
+		journalFile := filepath.Join(store.options.JournalDir, filename)
+		header, err := store.manifest.GetJournalMeta(filename)
 		if err != nil {
 			continue
 		}
 		if header.Old && header.To.Index < FromVersion.Index {
 			//first delete from manifest
 			//and than delete from syncer
-			fmt.Println("delete", journalFile)
-			if err := sstore.manifest.DeleteJournal(&pb.DeleteJournal{Filename: filename}); err != nil {
+			log.Info("delete", journalFile)
+			if err := store.manifest.DeleteJournal(&pb.DeleteJournal{Filename: filename}); err != nil {
 				return err
 			}
-			if err := sstore.manifest.DelJournalMeta(&pb.DelJournalMeta{Filename: filename}); err != nil {
+			if err := store.manifest.DelJournalMeta(&pb.DelJournalMeta{Filename: filename}); err != nil {
 				return err
 			}
-			sstore.syncer.deleteJournal(journalFile)
+			store.syncer.deleteJournal(journalFile)
 		}
 	}
 	return nil
 }
 
-func (sstore *SStore) clearSegment() error {
-	segmentFiles := sstore.manifest.GetSegmentFiles()
-	if len(segmentFiles) <= sstore.options.MaxSegmentCount {
+func (store *Store) clearSegment() error {
+	segmentFiles := store.manifest.GetSegmentFiles()
+	if len(segmentFiles) <= store.options.MaxSegmentCount {
 		return nil
 	}
-	var deleteFiles = segmentFiles[:len(segmentFiles)-sstore.options.MaxSegmentCount+1]
+	var deleteFiles = segmentFiles[:len(segmentFiles)-store.options.MaxSegmentCount+1]
 	for _, filename := range deleteFiles {
-		segment := sstore.committer.getSegment(filename)
+		segment := store.getSegment(filename)
 		if segment == nil {
 			return errors.Errorf("no find segment[%s]", filename)
 		}
-		if err := sstore.manifest.DeleteSegment(&pb.DeleteSegment{Filename: filename}); err != nil {
+		if err := store.manifest.DeleteSegment(&pb.DeleteSegment{Filename: filename}); err != nil {
 			return err
 		}
 		if err := segment.deleteOnClose(true); err != nil {
 			return err
 		}
-		if err := sstore.committer.deleteSegment(filename); err != nil {
+		if err := store.deleteSegment(filename); err != nil {
 			return err
 		}
 		segment.DecRef()

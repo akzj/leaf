@@ -18,29 +18,43 @@ import (
 	"github.com/akzj/streamIO/pkg/block-queue"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 )
 
-type SStore struct {
+type Store struct {
 	options    Options
-	entryQueue *block_queue.Queue
+	entryQueue *block_queue.QueueWithContext
+	isClose    int32
 
-	version       *pb.Version
-	notifyPool    sync.Pool
-	endMap        *int64LockMap
-	committer     *committer
-	indexTable    *indexTable
-	endWatchers   *endWatchers
-	journalWriter *journalWriter
-	manifest      *Manifest
-	isClose       int32
-	syncer        *Syncer
+	version           *pb.Version
+	endMap            *int64LockMap
+	committer         *committer
+	indexTable        *indexTable
+	streamWatcher     *streamWatcher
+	journalWriter     *journalWriter
+	manifest          *Manifest
+	syncer            *Syncer
+	flusher           *flusher
+	indexTableUpdater *indexTableUpdater
+	callbackWorker    *callbackWorker
+
+	immutableMStreamMapsLocker sync.Mutex
+	immutableMStreamMaps       []*mStreamTable
+
+	segmentsLocker sync.Mutex
+	segments       map[string]*segment
+
+	wg     sync.WaitGroup
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 type Snapshot struct {
@@ -48,24 +62,37 @@ type Snapshot struct {
 	Version *pb.Version     `json:"version"`
 }
 
-func Open(options Options) (*SStore, error) {
-	var sstore = &SStore{
-		options:    options,
-		entryQueue: block_queue.NewQueue(options.RequestQueueCap),
-		version:    nil,
-		notifyPool: sync.Pool{
-			New: func() interface{} {
-				return make(chan interface{}, 1)
-			},
-		},
-		endMap:        newInt64LockMap(),
-		committer:     nil,
-		indexTable:    newIndexTable(),
-		endWatchers:   newEndWatchers(),
-		journalWriter: nil,
-		manifest:      nil,
-		isClose:       0,
-		syncer:        nil,
+type WriteEntryRequest struct {
+	Entry *pb.Entry
+	end   int64
+	err   error
+	cb    func(end int64, err error)
+}
+
+func Open(options Options) (*Store, error) {
+	ctx, cancel := context.WithCancel(options.Ctx)
+	var sstore = &Store{
+		options:                    options,
+		entryQueue:                 nil,
+		isClose:                    0,
+		version:                    nil,
+		endMap:                     newInt64LockMap(),
+		committer:                  nil,
+		indexTable:                 newIndexTable(),
+		streamWatcher:              nil,
+		journalWriter:              nil,
+		manifest:                   nil,
+		syncer:                     nil,
+		flusher:                    nil,
+		indexTableUpdater:          nil,
+		callbackWorker:             nil,
+		immutableMStreamMapsLocker: sync.Mutex{},
+		immutableMStreamMaps:       nil,
+		segmentsLocker:             sync.Mutex{},
+		segments:                   map[string]*segment{},
+		wg:                         sync.WaitGroup{},
+		ctx:                        ctx,
+		cancel:                     cancel,
 	}
 	if err := sstore.init(); err != nil {
 		return nil, err
@@ -73,55 +100,37 @@ func Open(options Options) (*SStore, error) {
 	return sstore, nil
 }
 
-func (sstore *SStore) Options() Options {
-	return sstore.options
+func (store *Store) Options() Options {
+	return store.options
 }
 
-func (sstore *SStore) nextEntryID() int64 {
-	return atomic.AddInt64(&sstore.version.Index, 1)
-}
-
-//Append append the data to end of the stream
-//return offset to the data
-func (sstore *SStore) Append(streamID int64, data []byte, offset int64) (int64, error) {
-	notify := sstore.notifyPool.Get().(chan interface{})
-	var err error
-	var newOffset int64
-	sstore.AsyncAppend(streamID, data, offset, func(offset int64, e error) {
-		err = e
-		newOffset = offset
-		notify <- struct{}{}
-	})
-	<-notify
-	sstore.notifyPool.Put(notify)
-	return newOffset, err
+func (store *Store) nextEntryID() int64 {
+	return atomic.AddInt64(&store.version.Index, 1)
 }
 
 //AsyncAppend async append the data to end of the stream
-func (sstore *SStore) AsyncAppend(streamID int64, data []byte, offset int64, cb func(offset int64, err error)) {
-	sstore.entryQueue.Push(&WriteEntryRequest{
+func (store *Store) AsyncAppend(streamID int64, data []byte, offset int64, cb func(offset int64, err error)) {
+	if err := store.entryQueue.Push(&WriteEntryRequest{
 		Entry: &pb.Entry{
 			StreamID: streamID,
 			Offset:   offset,
 			Ver: &pb.Version{
 				Term:  0,
-				Index: sstore.nextEntryID(),
+				Index: store.nextEntryID(),
 			},
 			Data: data,
 		},
-		close: false,
-		end:   0,
-		err:   nil,
-		cb:    cb,
-	})
+		cb: cb,
+	}); err != nil {
+		cb(-1, err)
+	}
 }
 
 //AsyncAppend async append the data to end of the stream
-func (sstore *SStore) AppendEntryWithCb(entry *pb.Entry, cb func(offset int64, err error)) {
-	sstore.version = entry.Ver
-	sstore.entryQueue.Push(&WriteEntryRequest{
+func (store *Store) AppendEntryWithCb(entry *pb.Entry, cb func(offset int64, err error)) {
+	store.version = entry.Ver
+	store.entryQueue.Push(&WriteEntryRequest{
 		Entry: entry,
-		close: false,
 		end:   0,
 		err:   nil,
 		cb:    cb,
@@ -129,25 +138,25 @@ func (sstore *SStore) AppendEntryWithCb(entry *pb.Entry, cb func(offset int64, e
 }
 
 //Reader create Reader of the stream
-func (sstore *SStore) Reader(streamID int64) (io.ReadSeeker, error) {
-	return sstore.indexTable.reader(streamID)
+func (store *Store) Reader(streamID int64) (io.ReadSeeker, error) {
+	return store.indexTable.reader(streamID)
 }
 
-//Watcher create watcher of the stream
-func (sstore *SStore) Watcher(streamID int64) Watcher {
-	return sstore.endWatchers.newEndWatcher(streamID)
+//Watcher create Watcher of the stream
+func (store *Store) Watcher(streamID int64) *Watcher {
+	return store.streamWatcher.newEndWatcher(streamID)
 }
 
-//size return the end of stream.
+//End return the end of stream.
 //return _,false when the stream no exist
-func (sstore *SStore) End(streamID int64) (int64, bool) {
-	return sstore.endMap.get(streamID)
+func (store *Store) End(streamID int64) (int64, bool) {
+	return store.endMap.get(streamID)
 }
 
 //base return the begin of stream.
 //return 0,false when the stream no exist
-func (sstore *SStore) Begin(streamID int64) (int64, bool) {
-	offsetIndex := sstore.indexTable.get(streamID)
+func (store *Store) Begin(streamID int64) (int64, bool) {
+	offsetIndex := store.indexTable.get(streamID)
 	if offsetIndex == nil {
 		return 0, false
 	}
@@ -156,60 +165,204 @@ func (sstore *SStore) Begin(streamID int64) (int64, bool) {
 
 //Exist
 //return true if the stream exist otherwise return false
-func (sstore *SStore) Exist(streamID int64) bool {
-	_, ok := sstore.Begin(streamID)
+func (store *Store) Exist(streamID int64) bool {
+	_, ok := store.Begin(streamID)
 	return ok
 }
 
 //GC will delete useless journal manifest,segments
-func (sstore *SStore) GC() error {
-	if err := sstore.clearSegment(); err != nil {
+func (store *Store) GC() error {
+	if err := store.clearSegment(); err != nil {
 		return err
 	}
 	return nil
 }
 
-//Close sstore
-func (sstore *SStore) Close() error {
-	if atomic.CompareAndSwapInt32(&sstore.isClose, 0, 1) == false {
+//Close store
+func (store *Store) Close() error {
+	if atomic.CompareAndSwapInt32(&store.isClose, 0, 1) == false {
 		return errors.New("repeated close")
 	}
-	sstore.journalWriter.close()
-	sstore.manifest.Close()
-	sstore.endWatchers.close()
-	sstore.syncer.Close()
+	store.cancel()
+	store.wg.Wait()
 	return nil
 }
 
-func (sstore *SStore) GetSnapshot() Snapshot {
-	int64Map, version := sstore.endMap.CloneMap()
+func (store *Store) GetSnapshot() Snapshot {
+	int64Map, version := store.endMap.CloneMap()
 	return Snapshot{
 		EndMap:  int64Map,
 		Version: version,
 	}
 }
 
-func (sstore *SStore) Sync(ctx context.Context, ServerID int64, index int64, f func(SyncCallback) error) error {
-	return sstore.syncer.SyncRequest(ctx, ServerID, index, f)
+func (store *Store) getSegmentByIndex(index int64) *segment {
+	store.segmentsLocker.Lock()
+	defer store.segmentsLocker.Unlock()
+	var segments []*segment
+	for _, segment := range store.segments {
+		segments = append(segments, segment)
+	}
+	if len(segments) == 0 {
+		return nil
+	}
+	for _, segment := range store.segments {
+		if segment.meta.From.Index <= index && index <= segment.meta.To.Index {
+			segment.IncRef()
+			return segment
+		}
+	}
+	return nil
 }
 
-func (sstore *SStore) OpenSegmentReader(filename string) (*SegmentReader, error) {
-	segment := sstore.committer.getSegment(filename)
+func (store *Store) getSegment(filename string) *segment {
+	store.segmentsLocker.Lock()
+	defer store.segmentsLocker.Unlock()
+	segment, ok := store.segments[filepath.Base(filename)]
+	if ok {
+		segment.IncRef()
+	}
+	return segment
+}
+
+func (store *Store) appendSegment(filename string, segment *segment) {
+	store.segmentsLocker.Lock()
+	defer store.segmentsLocker.Unlock()
+	segment.IncRef()
+	store.segments[filepath.Base(filename)] = segment
+	if err := store.indexTable.update1(segment); err != nil {
+		log.Fatalf("%+v", err)
+	}
+}
+
+func (store *Store) appendMStreamTable(streamMap *mStreamTable) {
+	store.immutableMStreamMapsLocker.Lock()
+	defer store.immutableMStreamMapsLocker.Unlock()
+	store.immutableMStreamMaps = append(store.immutableMStreamMaps, streamMap)
+}
+
+func (store *Store) flushCallback(filename string) error {
+	segment, err := openSegment(filename)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	var remove *mStreamTable
+	store.immutableMStreamMapsLocker.Lock()
+	if len(store.immutableMStreamMaps) > store.options.MaxImmutableMStreamTableCount {
+		remove = store.immutableMStreamMaps[0]
+		copy(store.immutableMStreamMaps[0:], store.immutableMStreamMaps[1:])
+		store.immutableMStreamMaps[len(store.immutableMStreamMaps)-1] = nil
+		store.immutableMStreamMaps = store.immutableMStreamMaps[:len(store.immutableMStreamMaps)-1]
+	}
+	store.immutableMStreamMapsLocker.Unlock()
+
+	store.appendSegment(filename, segment)
+	//remove from indexTable
+	if remove != nil {
+		for _, mStream := range remove.mStreams {
+			store.indexTable.remove(mStream)
+		}
+	}
+	if err := store.manifest.AppendSegment(&pb.AppendSegment{Filename: filename}); err != nil {
+		log.Fatalf(err.Error())
+	}
+	if err := store.clearJournal(); err != nil {
+		log.Fatalf(err.Error())
+	}
+	return nil
+}
+
+func (store *Store) Sync(ctx context.Context, ServerID int64, index int64, f func(SyncCallback) error) error {
+	return store.syncer.SyncRequest(ctx, ServerID, index, f)
+}
+
+func (store *Store) deleteSegment(filename string) error {
+	filename = filepath.Base(filename)
+	store.segmentsLocker.Lock()
+	defer store.segmentsLocker.Unlock()
+	segment, ok := store.segments[filename]
+	if ok == false {
+		return ErrNoFindSegment
+	}
+	delete(store.segments, filename)
+	if err := store.indexTable.remove1(segment); err != nil {
+		return err
+	}
+	segment.DecRef()
+	return nil
+}
+
+func (store *Store) OpenSegmentReader(filename string) (*SegmentReader, error) {
+	segment := store.getSegment(filename)
 	if segment == nil {
 		return nil, ErrNoFindSegment
 	}
-	return sstore.syncer.OpenSegmentReader(segment)
+	return store.syncer.OpenSegmentReader(segment)
 }
 
-func (sstore *SStore) CreateSegmentWriter(filename string) (*SegmentWriter, error) {
+func (store *Store) commitSegmentFile(filename string) error {
+	segment, err := openSegment(filename)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+
+	//clear old segments
+	var segmentFiles = store.manifest.GetSegmentFiles()
+	if len(segmentFiles) != 0 {
+		sort.Strings(segmentFiles)
+		lastSegmentIndex, err := parseFileIndex(segmentFiles[len(segmentFiles)-1])
+		if err != nil {
+			panic(err)
+		}
+		segmentIndex, err := parseFileIndex(filename)
+		if lastSegmentIndex != segmentIndex-1 {
+			for _, segmentFile := range segmentFiles {
+				if segment := store.getSegment(segmentFile); segment != nil {
+					_ = segment.deleteOnClose(true)
+					segment.DecRef()
+					if err := store.deleteSegment(segmentFile); err != nil {
+						log.Error(err)
+					}
+				}
+			}
+		}
+	}
+
+	//update end map
+	for streamID, info := range segment.meta.OffSetInfos {
+		store.endMap.set(streamID, info.End, segment.meta.To)
+	}
+
+	//clear memory table
+	store.committer.mutableMStreamMap = newMStreamTable(store.endMap,
+		store.options.BlockSize, len(segment.meta.OffSetInfos))
+
+	//update version
+	store.version = segment.meta.To
+
+	if err := store.flushCallback(filename); err != nil {
+		return err
+	}
+	var notifies = make([]interface{}, 0, len(segment.meta.OffSetInfos))
+	for streamID, info := range segment.meta.OffSetInfos {
+		var item notify
+		item.streamID = streamID
+		item.end = info.End
+		notifies = append(notifies, item)
+	}
+	_ = store.streamWatcher.queue.PushMany(notifies)
+	return nil
+}
+
+func (store *Store) CreateSegmentWriter(filename string) (*SegmentWriter, error) {
 	segmentIndex, err := strconv.ParseInt(strings.Split(filename, ".")[0], 10, 64)
 	if err != nil {
 		return nil, err
 	}
-	if err := sstore.manifest.SetSegmentIndex(segmentIndex); err != nil {
+	if err := store.manifest.SetSegmentIndex(segmentIndex); err != nil {
 		return nil, err
 	}
-	filename = filepath.Join(sstore.options.SegmentDir, filename)
+	filename = filepath.Join(store.options.SegmentDir, filename)
 	f, err := os.Create(filename)
 	if err != nil {
 		return nil, errors.WithStack(err)
@@ -224,12 +377,12 @@ func (sstore *SStore) CreateSegmentWriter(filename string) (*SegmentWriter, erro
 			if err := f.Close(); err != nil {
 				return err
 			}
-			return sstore.committer.ReceiveSegmentFile(filename)
+			return store.commitSegmentFile(filename)
 		},
 	}
 	return writer, nil
 }
 
-func (sstore *SStore) Version() *pb.Version {
-	return sstore.version
+func (store *Store) Version() *pb.Version {
+	return store.version
 }
