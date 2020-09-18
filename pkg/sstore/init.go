@@ -46,7 +46,7 @@ func (sStore *SStore) init() error {
 			return err
 		}
 	}
-	manifest, err := openManifest(sStore.options.ManifestDir,
+	manifest, err := OpenManifest(sStore.options.ManifestDir,
 		sStore.options.SegmentDir,
 		sStore.options.JournalDir)
 	if err != nil {
@@ -69,13 +69,12 @@ func (sStore *SStore) init() error {
 	sStore.syncer = newSyncer(sStore)
 
 	sStore.committer.start()
-	sStore.manifest.start()
 	sStore.endWatchers.start()
 	sStore.syncer.start()
 
 	//rebuild segment index
-	segmentFiles := manifest.getSegmentFiles()
-	sortIntFilename(segmentFiles)
+	segmentFiles := manifest.GetSegmentFiles()
+	sortFilename(segmentFiles)
 	for _, file := range segmentFiles {
 		segment, err := openSegment(filepath.Join(sStore.options.SegmentDir, file))
 		if err != nil {
@@ -101,14 +100,14 @@ func (sStore *SStore) init() error {
 
 	//replay entries in the journal
 	var leastJournal *journal
-	journalFiles := manifest.getJournalFiles()
+	journalFiles := manifest.GetJournalFiles()
 	for index, filename := range journalFiles {
 		least := filename == journalFiles[index]
 		journal, err := OpenJournal(filepath.Join(sStore.options.JournalDir, filename))
 		if err != nil {
 			return err
 		}
-		header, err := manifest.getJournalHeader(filename)
+		header, err := manifest.GetJournalMeta(filename)
 		if err != nil {
 			if !least {
 				return err
@@ -150,7 +149,7 @@ func (sStore *SStore) init() error {
 
 	//create journal writer
 	if leastJournal == nil {
-		file, err := manifest.geNextJournal()
+		file, err := manifest.NextJournal()
 		if err != nil {
 			panic(err)
 		}
@@ -169,7 +168,7 @@ func (sStore *SStore) init() error {
 	sStore.journalWriter.start()
 
 	//clear dead journal
-	journalFiles = manifest.getJournalFiles()
+	journalFiles = manifest.GetJournalFiles()
 	allJournalFiles, err := listDir(sStore.options.JournalDir, manifestExt)
 	if err != nil {
 		return err
@@ -182,7 +181,7 @@ func (sStore *SStore) init() error {
 	}
 
 	//clear dead segment manifest
-	segmentFiles = manifest.getSegmentFiles()
+	segmentFiles = manifest.GetSegmentFiles()
 	segmentFileAll, err := listDir(sStore.options.SegmentDir, segmentExt)
 	if err != nil {
 		return err

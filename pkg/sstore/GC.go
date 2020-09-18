@@ -24,8 +24,8 @@ import (
 // delete journal
 // delete segment
 func (sstore *SStore) clearJournal() error {
-	journalFiles := sstore.manifest.getJournalFiles()
-	segmentFiles := sstore.manifest.getSegmentFiles()
+	journalFiles := sstore.manifest.GetJournalFiles()
+	segmentFiles := sstore.manifest.GetSegmentFiles()
 	if len(segmentFiles) == 0 {
 		return nil
 	}
@@ -38,7 +38,7 @@ func (sstore *SStore) clearJournal() error {
 	segment.DecRef()
 	for _, filename := range journalFiles {
 		journalFile := filepath.Join(sstore.options.JournalDir, filename)
-		header, err := sstore.manifest.getJournalHeader(filename)
+		header, err := sstore.manifest.GetJournalMeta(filename)
 		if err != nil {
 			continue
 		}
@@ -46,10 +46,10 @@ func (sstore *SStore) clearJournal() error {
 			//first delete from manifest
 			//and than delete from syncer
 			fmt.Println("delete", journalFile)
-			if err := sstore.manifest.deleteJournal(&pb.DeleteJournal{Filename: filename}); err != nil {
+			if err := sstore.manifest.DeleteJournal(&pb.DeleteJournal{Filename: filename}); err != nil {
 				return err
 			}
-			if err := sstore.manifest.delWalHeader(&pb.DelJournalHeader{Filename: filename}); err != nil {
+			if err := sstore.manifest.DelJournalMeta(&pb.DelJournalMeta{Filename: filename}); err != nil {
 				return err
 			}
 			sstore.syncer.deleteJournal(journalFile)
@@ -59,7 +59,7 @@ func (sstore *SStore) clearJournal() error {
 }
 
 func (sstore *SStore) clearSegment() error {
-	segmentFiles := sstore.manifest.getSegmentFiles()
+	segmentFiles := sstore.manifest.GetSegmentFiles()
 	if len(segmentFiles) <= sstore.options.MaxSegmentCount {
 		return nil
 	}
@@ -69,7 +69,7 @@ func (sstore *SStore) clearSegment() error {
 		if segment == nil {
 			return errors.Errorf("no find segment[%s]", filename)
 		}
-		if err := sstore.manifest.deleteSegment(&pb.DeleteSegment{Filename: filename}); err != nil {
+		if err := sstore.manifest.DeleteSegment(&pb.DeleteSegment{Filename: filename}); err != nil {
 			return err
 		}
 		if err := segment.deleteOnClose(true); err != nil {

@@ -45,8 +45,8 @@ func TestJournal(t *testing.T) {
 				Data:     []byte(strconv.Itoa(i)),
 				Ver:      &pb.Version{Index: int64(i)},
 			}))
+			assert.NoError(t, journal.Flush())
 		}
-		assert.NoError(t, journal.Flush())
 	})
 
 	t.Run("test_journal_mmap_read", func(t *testing.T) {
@@ -93,7 +93,7 @@ func TestJournal(t *testing.T) {
 
 	t.Run("test_journal_mmap_release", func(t *testing.T) {
 		assert.Nil(t, journal.GetJournalMMap())
-		assert.True(t, journal.JournalMMap.refCount() < 0)
+		assert.True(t, journal.JournalMMap.Count() < 0)
 		assert.Nil(t, journal.JournalMMap.data)
 	})
 }

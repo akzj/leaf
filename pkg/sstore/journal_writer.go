@@ -27,7 +27,7 @@ type journalWriter struct {
 	queue          *block_queue.Queue
 	commitQueue    *block_queue.Queue
 	syncer         *Syncer
-	manifest       *manifest
+	manifest       *Manifest
 	maxJournalSize int64
 }
 
@@ -35,7 +35,7 @@ func newJournalWriter(journal *journal,
 	queue *block_queue.Queue,
 	commitQueue *block_queue.Queue,
 	syncer *Syncer,
-	files *manifest, maxWalSize int64) *journalWriter {
+	files *Manifest, maxWalSize int64) *journalWriter {
 	return &journalWriter{
 		journal:        journal,
 		queue:          queue,
@@ -56,7 +56,7 @@ func (jWriter *journalWriter) JournalFilename() string {
 }
 
 func (jWriter *journalWriter) createNewJournal() error {
-	index, err := jWriter.manifest.geNextJournal()
+	index, err := jWriter.manifest.NextJournal()
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,7 @@ func (jWriter *journalWriter) createNewJournal() error {
 	}
 	header := jWriter.journal.GetMeta()
 	header.Old = true
-	if err := jWriter.manifest.setJournalHeader(header); err != nil {
+	if err := jWriter.manifest.SetJournalMeta(header); err != nil {
 		return err
 	}
 	if err := jWriter.journal.Close(); err != nil {

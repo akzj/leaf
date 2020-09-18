@@ -57,7 +57,7 @@ message DeleteSegment  {
   string  Filename = 1;
 }
 
-message DelJournalHeader  {
+message DelJournalMeta  {
   string  Filename = 1;
 }
 
@@ -71,5 +71,5 @@ message ManifestSnapshot{
   Version      version = 1;
   repeated string segments = 2;
   repeated  string journals = 3;
-  map<string, JournalMeta> journal_headers = 4;
+  map<string, JournalMeta> journal_metas = 4;
 }
