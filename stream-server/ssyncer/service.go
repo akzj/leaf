@@ -99,7 +99,6 @@ func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncServi
 			}
 
 			if callback.Entry != nil {
-				fmt.Println("callback entry", callback.Entry.Ver)
 				appendEntry(callback.Entry)
 				callback.Entry = nil
 			}

@@ -14,9 +14,9 @@
 package sstore
 
 import (
-	"fmt"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"path/filepath"
 )
 
@@ -45,7 +45,7 @@ func (sstore *SStore) clearJournal() error {
 		if header.Old && header.To.Index < FromVersion.Index {
 			//first delete from manifest
 			//and than delete from syncer
-			fmt.Println("delete", journalFile)
+			log.Info("delete", journalFile)
 			if err := sstore.manifest.DeleteJournal(&pb.DeleteJournal{Filename: filename}); err != nil {
 				return err
 			}

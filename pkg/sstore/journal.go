@@ -43,6 +43,7 @@ type journal struct {
 	flushVer unsafe.Pointer //*pb.Version
 
 	JournalMMap *JournalMMap
+	isClose     int32
 }
 
 type JournalMMap struct {
@@ -171,13 +172,15 @@ func (j *journal) Size() int64 {
 }
 
 func (j *journal) Close() error {
-	if err := j.Flush(); err != nil {
-		return errors.WithStack(err)
+	if atomic.CompareAndSwapInt32(&j.isClose, 0, 1) {
+		if err := j.Flush(); err != nil {
+			return errors.WithStack(err)
+		}
+		if err := j.f.Close(); err != nil {
+			return errors.WithStack(err)
+		}
+		j.JournalMMap.DecRef()
 	}
-	if err := j.f.Close(); err != nil {
-		return errors.WithStack(err)
-	}
-	j.JournalMMap.DecRef()
 	return nil
 }
 func (j *journal) GetJournalMMap() *JournalMMap {
