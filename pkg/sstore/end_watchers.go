@@ -101,8 +101,8 @@ func (endWatchers *endWatchers) start() {
 						watcher.notify(item.end)
 					}
 					notifyPool.Put(item)
-				case *closeRequest:
-					item.cb()
+				case *CloseRequest:
+					item.CB()
 					return
 				}
 			}
@@ -113,7 +113,7 @@ func (endWatchers *endWatchers) start() {
 func (endWatchers *endWatchers) close() {
 	var wg sync.WaitGroup
 	wg.Add(1)
-	endWatchers.queue.Push(&closeRequest{cb: func() {
+	endWatchers.queue.Push(&CloseRequest{CB: func() {
 		wg.Done()
 	}})
 	wg.Wait()

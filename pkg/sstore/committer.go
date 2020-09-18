@@ -86,7 +86,7 @@ func newCommitter(options Options,
 func (c *committer) appendSegment(filename string, segment *segment) {
 	c.segmentsLocker.Lock()
 	defer c.segmentsLocker.Unlock()
-	segment.refInc()
+	segment.IncRef()
 	c.segments[filepath.Base(filename)] = segment
 	if err := c.indexTable.update1(segment); err != nil {
 		log.Fatalf("%+v", err)
@@ -105,7 +105,7 @@ func (c *committer) getSegmentByIndex(index int64, lockSync bool) *segment {
 	}
 	for _, segment := range c.segments {
 		if segment.meta.From.Index <= index && index <= segment.meta.To.Index {
-			segment.refInc()
+			segment.IncRef()
 			if lockSync {
 				segment.GetSyncLocker().Lock()
 			}
@@ -120,7 +120,7 @@ func (c *committer) getSegment(filename string) *segment {
 	defer c.segmentsLocker.Unlock()
 	segment, ok := c.segments[filepath.Base(filename)]
 	if ok {
-		segment.refInc()
+		segment.IncRef()
 	}
 	return segment
 }
@@ -137,7 +137,7 @@ func (c *committer) deleteSegment(filename string) error {
 	if err := c.indexTable.remove1(segment); err != nil {
 		return err
 	}
-	segment.refDec()
+	segment.DecRef()
 	return nil
 }
 
@@ -192,7 +192,7 @@ func (c *committer) ReceiveSegmentFile(filename string) error {
 			for _, segmentFile := range segmentFiles {
 				if segment := c.getSegment(segmentFile); segment != nil {
 					_ = segment.deleteOnClose(true)
-					segment.refDec()
+					segment.DecRef()
 					if err := c.deleteSegment(segmentFile); err != nil {
 						log.Error(err)
 					}
@@ -251,10 +251,10 @@ func (c *committer) start() {
 			for i := range items {
 				request := items[i]
 				switch request := request.(type) {
-				case *closeRequest:
+				case *CloseRequest:
 					c.flusher.close()
 					c.callbackQueue.Push(request)
-				case *WriteRequest:
+				case *WriteEntryRequest:
 					mStream, end := c.mutableMStreamMap.appendEntry(request)
 					if end == -1 {
 						request.err = ErrOffset

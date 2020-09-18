@@ -104,7 +104,7 @@ func (sStore *SStore) init() error {
 	journalFiles := manifest.getJournalFiles()
 	for index, filename := range journalFiles {
 		least := filename == journalFiles[index]
-		journal, err := openJournal(filepath.Join(sStore.options.JournalDir, filename))
+		journal, err := OpenJournal(filepath.Join(sStore.options.JournalDir, filename))
 		if err != nil {
 			return err
 		}
@@ -124,7 +124,7 @@ func (sStore *SStore) init() error {
 				return nil
 			} else if entry.Ver.Index == sStore.version.Index+1 {
 				sStore.version = entry.Ver
-				committer.queue.Push(&WriteRequest{
+				committer.queue.Push(&WriteEntryRequest{
 					Entry: entry,
 					cb:    func(end int64, err error) {},
 				})
@@ -154,7 +154,7 @@ func (sStore *SStore) init() error {
 		if err != nil {
 			panic(err)
 		}
-		leastJournal, err = openJournal(file)
+		leastJournal, err = OpenJournal(file)
 		if err != nil {
 			return err
 		}

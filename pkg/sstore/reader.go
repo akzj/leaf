@@ -79,11 +79,11 @@ func (r *reader) Read(p []byte) (int, error) {
 			size += n
 			r.offset += int64(n)
 		} else if item.segment != nil {
-			if item.segment.refInc() < 0 {
+			if item.segment.IncRef() < 0 {
 				return size, errors.WithStack(ErrOffset)
 			}
 			n, err := item.segment.Reader(r.streamID).ReadAt(buf, r.offset)
-			item.segment.refDec()
+			item.segment.DecRef()
 			if err != nil {
 				if err == io.EOF {
 					if size == 0 {

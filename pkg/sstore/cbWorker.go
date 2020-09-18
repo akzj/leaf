@@ -33,10 +33,10 @@ func (worker *cbWorker) start() {
 				item := items[index]
 				items[index] = nil
 				switch request := item.(type) {
-				case *WriteRequest:
+				case *WriteEntryRequest:
 					request.cb(request.end, request.err)
-				case *closeRequest:
-					request.cb()
+				case *CloseRequest:
+					request.CB()
 					return
 				}
 			}
