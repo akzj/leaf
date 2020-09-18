@@ -14,11 +14,13 @@
 package sstore
 
 import (
+	"context"
 	"math"
 	"path/filepath"
 )
 
 type Options struct {
+	Ctx                           context.Context
 	Path                          string `json:"path"`
 	ManifestDir                   string `json:"manifest_dir"`
 	JournalDir                    string `json:"journal_dir"`
@@ -36,6 +38,7 @@ const KB = 1024
 
 func DefaultOptions(Path string) Options {
 	return Options{
+		Ctx:                           context.Background(),
 		Path:                          Path,
 		ManifestDir:                   filepath.Join(Path, "manifest"),
 		JournalDir:                    filepath.Join(Path, "journal"),
@@ -43,10 +46,15 @@ func DefaultOptions(Path string) Options {
 		MaxSegmentCount:               math.MaxInt32,
 		BlockSize:                     4 * KB,
 		MaxMStreamTableSize:           256 * MB,
-		MaxImmutableMStreamTableCount: 2,
-		RequestQueueCap:               128,
+		MaxImmutableMStreamTableCount: 0,
+		RequestQueueCap:               1024,
 		MaxJournalSize:                128 * MB,
 	}
+}
+
+func (opt Options) WithCtx(val context.Context) Options {
+	opt.Ctx = val
+	return opt
 }
 
 //WithFilesDir

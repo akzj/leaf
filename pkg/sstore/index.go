@@ -14,17 +14,19 @@
 package sstore
 
 import (
+	block_queue "github.com/akzj/streamIO/pkg/block-queue"
 	"github.com/pkg/errors"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"sort"
 	"sync"
 )
 
 type offsetItem struct {
 	segment *segment
-	mStream *mStream
-	begin   int64
-	end     int64
+	mStream *stream
+	//[begin,end) exclude end
+	begin int64
+	end   int64
 }
 
 type offsetIndex struct {
@@ -42,6 +44,11 @@ func newOffsetIndex(streamID int64, item offsetItem) *offsetIndex {
 		items:    append(make([]offsetItem, 0, 128), item),
 	}
 }
+func (index *offsetIndex) getItems() []offsetItem {
+	index.l.RLock()
+	defer index.l.RUnlock()
+	return append(make([]offsetItem, 0, len(index.items)), index.items...)
+}
 
 func (index *offsetIndex) find(offset int64) (offsetItem, error) {
 	index.l.RLock()
@@ -58,7 +65,7 @@ func (index *offsetIndex) find(offset int64) (offsetItem, error) {
 	return index.items[i], nil
 }
 
-func (index *offsetIndex) update(item offsetItem) error {
+func (index *offsetIndex) insertOrUpdate(item offsetItem) error {
 	index.l.Lock()
 	defer index.l.Unlock()
 	if len(index.items) == 0 {
@@ -86,7 +93,7 @@ func (index *offsetIndex) update(item offsetItem) error {
 		}
 		return nil
 	} else {
-		return errors.Errorf("update index error begin[%d] end[%d]",
+		return errors.Errorf("insertOrUpdate index error begin[%d] end[%d]",
 			item.begin, item.end)
 	}
 }
@@ -179,7 +186,7 @@ func (index *indexTable) update1(segment *segment) error {
 		}
 		offsetIndex, load := index.loadOrCreate(it.StreamID, item)
 		if load {
-			if err := offsetIndex.update(item); err != nil {
+			if err := offsetIndex.insertOrUpdate(item); err != nil {
 				return err
 			}
 		}
@@ -207,7 +214,7 @@ func (index *indexTable) remove1(segment *segment) error {
 	return nil
 }
 
-func (index *indexTable) update(stream *mStream) {
+func (index *indexTable) update(stream *stream) {
 	item := offsetItem{
 		segment: nil,
 		mStream: stream,
@@ -216,13 +223,13 @@ func (index *indexTable) update(stream *mStream) {
 	}
 	offsetIndex, loaded := index.loadOrCreate(stream.streamID, item)
 	if loaded {
-		if err := offsetIndex.update(item); err != nil {
+		if err := offsetIndex.insertOrUpdate(item); err != nil {
 			log.Panicf("%+v", err)
 		}
 	}
 }
 
-func (index *indexTable) remove(stream *mStream) {
+func (index *indexTable) remove(stream *stream) {
 	if offsetIndex := index.get(stream.streamID); offsetIndex != nil {
 		offsetIndex.remove(offsetItem{
 			segment: nil,
@@ -244,4 +251,43 @@ func (index *indexTable) reader(streamID int64) (*reader, error) {
 		return nil, errors.Wrapf(ErrNoFindStream, "stream[%d]", streamID)
 	}
 	return newReader(streamID, offsetIndex, index.endMap), nil
+}
+
+type updateIndexTable struct {
+	mStreams  []*stream
+	notifies  []interface{}
+	callbacks []interface{}
+}
+
+type indexTableUpdater struct {
+	callbackQueue *block_queue.QueueWithContext
+	notifyQueue   *block_queue.QueueWithContext
+	queue         *block_queue.QueueWithContext
+	indexTable    *indexTable
+}
+
+func (updater *indexTableUpdater) updateLoop() {
+	for {
+		items, err := updater.queue.PopAll(nil)
+		if err != nil {
+			log.Warn(err)
+			return
+		}
+		for _, item := range items {
+			update := item.(updateIndexTable)
+			for _, stream := range update.mStreams {
+				updater.indexTable.update(stream)
+			}
+			if update.callbacks != nil {
+				if err := updater.callbackQueue.PushMany(update.callbacks); err != nil {
+					log.Fatal(err)
+				}
+			}
+			if update.notifies != nil {
+				if err := updater.notifyQueue.PushMany(update.notifies); err != nil {
+					log.Fatal(err)
+				}
+			}
+		}
+	}
 }

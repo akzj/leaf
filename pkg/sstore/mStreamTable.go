@@ -26,7 +26,7 @@ type mStreamTable struct {
 	to        *pb.Version //last version, include
 	endMap    *int64LockMap
 	CreateTS  time.Time
-	mStreams  map[int64]*mStream
+	mStreams  map[int64]*stream
 	blockSize int
 }
 
@@ -39,12 +39,12 @@ func newMStreamTable(sizeMap *int64LockMap,
 		to:        nil,
 		endMap:    sizeMap,
 		CreateTS:  time.Now(),
-		mStreams:  make(map[int64]*mStream, mStreamMapSize),
+		mStreams:  make(map[int64]*stream, mStreamMapSize),
 		blockSize: blockSize,
 	}
 }
 
-func (m *mStreamTable) loadOrCreateMStream(streamID int64) (*mStream, bool) {
+func (m *mStreamTable) loadOrCreateMStream(streamID int64) (*stream, bool) {
 	m.locker.Lock()
 	ms, ok := m.mStreams[streamID]
 	if ok {
@@ -52,24 +52,24 @@ func (m *mStreamTable) loadOrCreateMStream(streamID int64) (*mStream, bool) {
 		return ms, true
 	}
 	size, _ := m.endMap.get(streamID)
-	ms = newMStream(size, m.blockSize, streamID)
+	ms = newStream(size, m.blockSize, streamID)
 	m.mStreams[streamID] = ms
 	m.locker.Unlock()
 	return ms, false
 }
 
-//appendEntry append WriteEntryRequest mStream,and return the mStream if it created
-func (m *mStreamTable) appendEntry(e *WriteEntryRequest) (*mStream, int64) {
-	ms, load := m.loadOrCreateMStream(e.Entry.StreamID)
-	end := ms.write(e.Entry.Offset, e.Entry.Data)
+//appendEntry append *pb.Entry to stream,and return the stream if it create
+func (m *mStreamTable) appendEntry(entry *pb.Entry) (*stream, int64) {
+	ms, load := m.loadOrCreateMStream(entry.StreamID)
+	end := ms.write(entry.Offset, entry.Data)
 	if end == -1 {
 		return nil, -1
 	}
-	m.endMap.set(e.Entry.StreamID, end, e.Entry.Ver)
-	m.mSize += int64(len(e.Entry.Data))
-	m.to = e.Entry.Ver
+	m.endMap.set(entry.StreamID, end, entry.Ver)
+	m.mSize += int64(len(entry.Data))
+	m.to = entry.Ver
 	if m.from == nil {
-		m.from = e.Entry.Ver
+		m.from = entry.Ver
 	}
 	if load {
 		return nil, end

@@ -16,10 +16,10 @@ import (
 ssyncer stream from master
 */
 type Service struct {
-	store *sstore.SStore
+	store *sstore.Store
 }
 
-func NewService(store *sstore.SStore) *Service {
+func NewService(store *sstore.Store) *Service {
 	return &Service{
 		store: store,
 	}

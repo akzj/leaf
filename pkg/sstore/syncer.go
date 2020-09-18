@@ -17,8 +17,8 @@ import (
 )
 
 type Syncer struct {
-	sstore *SStore
-	queue  *block_queue.Queue
+	sstore *Store
+	queue  *block_queue.QueueWithContext
 
 	journalLocker sync.Mutex
 	journals      []*journal
@@ -62,10 +62,10 @@ func newSubscriber(ctx context.Context, index *int64) *subscriber {
 	}
 }
 
-func newSyncer(sstore *SStore) *Syncer {
+func newSyncer(sstore *Store) *Syncer {
 	return &Syncer{
 		sstore:            sstore,
-		queue:             block_queue.NewQueue(10240),
+		queue:             block_queue.NewQueueWithContext(sstore.ctx, 10240),
 		journalLocker:     sync.Mutex{},
 		journals:          nil,
 		subscribersLocker: sync.Mutex{},
@@ -179,11 +179,8 @@ func (syncer *Syncer) syncJournal(ctx context.Context, index *int64,
 func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f func(SyncCallback) error) error {
 	log.Debug("SyncRequest", serverID, index)
 	//ssyncer from segment
-	segment := syncer.sstore.committer.getSegmentByIndex(index, true)
+	segment := syncer.sstore.getSegmentByIndex(index)
 	if segment != nil {
-		defer func() {
-			segment.GetSyncLocker().Unlock()
-		}()
 		reader, err := syncer.OpenSegmentReader(segment)
 		if err != nil {
 			return err
@@ -268,22 +265,22 @@ func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f 
 	}
 }
 
-func (syncer *Syncer) start() {
-	go syncer.pushEntryLoop()
-}
-
 var errQueueFull = errors.New("queue full error")
 
 func (syncer *Syncer) pushEntryLoop() {
 	for {
-		items := syncer.queue.PopAll(nil)
+		items, err := syncer.queue.PopAll(nil)
+		if err != nil {
+			log.Warn("syncer stop")
+			return
+		}
 		syncer.subscribersLocker.Lock()
 		if len(syncer.subscribers) == 0 {
 			syncer.subscribersLocker.Unlock()
 			continue
 		}
 		for index, sub := range syncer.subscribers {
-			remain, err := sub.queue.PushManyWithBlock(items)
+			remain, err := sub.queue.PushManyWithoutBlock(items)
 			if err != nil {
 				delete(syncer.subscribers, index)
 				continue
@@ -310,21 +307,6 @@ func (syncer *Syncer) OpenSegmentReader(segment *segment) (*SegmentReader, error
 			segment.DecRef()
 		},
 	}, nil
-}
-
-func (syncer *Syncer) Close() {
-	var wg sync.WaitGroup
-	wg.Add(1)
-	syncer.queue.Push(&CloseRequest{
-		CB: func() {
-			wg.Done()
-		},
-	})
-	wg.Wait()
-}
-
-func (syncer *Syncer) PushMany(requests []interface{}) {
-	syncer.queue.PushMany(requests)
 }
 
 func (JI *journalIndex) append(index jIndex) {

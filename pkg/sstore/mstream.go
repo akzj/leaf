@@ -21,31 +21,29 @@ import (
 )
 
 //memory stream
-type mStream struct {
-	locker    sync.RWMutex
-	streamID  int64
-	begin     int64
-	end       int64
-	bufPages  []bufPage
-	blockSize int
+type stream struct {
+	locker   sync.RWMutex
+	streamID int64
+	begin    int64
+	end      int64
+	pageSize int
+	Pages    []page
 }
 
 const mStreamEnd = math.MaxInt64
 
-func newMStream(begin int64, blockSize int, streamID int64) *mStream {
-	blocks := make([]bufPage, 0, 128)
-	blocks = append(blocks, newPage(begin, blockSize))
-	return &mStream{
-		locker:    sync.RWMutex{},
-		streamID:  streamID,
-		begin:     begin,
-		end:       begin,
-		bufPages:  blocks,
-		blockSize: blockSize,
+func newStream(offset int64, pageSize int, streamID int64) *stream {
+	return &stream{
+		locker:   sync.RWMutex{},
+		streamID: streamID,
+		begin:    offset,
+		end:      offset,
+		pageSize: pageSize,
+		Pages:    append(make([]page, 0, 128), newPage(offset, pageSize)),
 	}
 }
 
-func (m *mStream) ReadAt(p []byte, off int64) (n int, err error) {
+func (m *stream) ReadAt(p []byte, off int64) (n int, err error) {
 	m.locker.RLock()
 	defer m.locker.RUnlock()
 	if off < m.begin || off > m.end {
@@ -56,18 +54,18 @@ func (m *mStream) ReadAt(p []byte, off int64) (n int, err error) {
 		return 0, io.EOF
 	}
 	offset := off - m.begin
-	index := offset / int64(m.blockSize)
-	offset = offset % int64(m.blockSize)
+	index := offset / int64(m.pageSize)
+	offset = offset % int64(m.pageSize)
 
 	var ret int
 	for len(p) > 0 {
-		block := &m.bufPages[index]
+		block := &m.Pages[index]
 		n := copy(p, block.buf[offset:block.limit])
 		offset = 0
 		ret += n
 		p = p[n:]
 		index++
-		if index >= int64(len(m.bufPages)) {
+		if index >= int64(len(m.Pages)) {
 			break
 		}
 	}
@@ -77,17 +75,17 @@ func (m *mStream) ReadAt(p []byte, off int64) (n int, err error) {
 	return ret, nil
 }
 
-func (m *mStream) write(offset int64, p []byte) int64 {
+func (m *stream) write(offset int64, p []byte) int64 {
 	m.locker.Lock()
 	defer m.locker.Unlock()
 	if offset != -1 && m.end != offset {
 		return -1
 	}
 	for len(p) > 0 {
-		if m.bufPages[len(m.bufPages)-1].limit == m.blockSize {
-			m.bufPages = append(m.bufPages, newPage(m.end, m.blockSize))
+		if m.Pages[len(m.Pages)-1].limit == m.pageSize {
+			m.Pages = append(m.Pages, newPage(m.end, m.pageSize))
 		}
-		block := &m.bufPages[len(m.bufPages)-1]
+		block := &m.Pages[len(m.Pages)-1]
 		n := copy(block.buf[block.limit:], p)
 		block.limit += n
 		m.end += int64(n)
@@ -96,12 +94,12 @@ func (m *mStream) write(offset int64, p []byte) int64 {
 	return m.end
 }
 
-func (m *mStream) writeTo(writer io.Writer) (int, error) {
+func (m *stream) writeTo(writer io.Writer) (int, error) {
 	m.locker.RLock()
 	defer m.locker.RUnlock()
 	var n int
-	for i := range m.bufPages {
-		ret, err := (&m.bufPages[i]).writeTo(writer)
+	for i := range m.Pages {
+		ret, err := (&m.Pages[i]).writeTo(writer)
 		n += ret
 		if err != nil {
 			return n, err
@@ -110,20 +108,20 @@ func (m *mStream) writeTo(writer io.Writer) (int, error) {
 	return n, nil
 }
 
-type bufPage struct {
+type page struct {
 	limit int
 	begin int64
 	buf   []byte
 }
 
-func newPage(begin int64, blockSize int) bufPage {
-	return bufPage{
+func newPage(begin int64, blockSize int) page {
+	return page{
 		limit: 0,
 		begin: begin,
 		buf:   make([]byte, blockSize),
 	}
 }
 
-func (p *bufPage) writeTo(writer io.Writer) (int, error) {
+func (p *page) writeTo(writer io.Writer) (int, error) {
 	return writer.Write(p.buf[:p.limit])
 }

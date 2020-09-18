@@ -223,7 +223,7 @@ func (queue *QueueWithContext) pushMany(items []interface{}) ([]interface{}, err
 	return items[remain:], nil
 }
 
-func (queue *QueueWithContext) PushManyWithBlock(items []interface{}) ([]interface{}, error) {
+func (queue *QueueWithContext) PushManyWithoutBlock(items []interface{}) ([]interface{}, error) {
 	queue.locker.Lock()
 	if len(queue.items) >= queue.max {
 		queue.locker.Unlock()
@@ -252,7 +252,7 @@ func (queue *QueueWithContext) PushMany(items []interface{}) error {
 func (queue *QueueWithContext) Pop() (interface{}, error) {
 	queue.locker.Lock()
 	for len(queue.items) == 0 {
-		if err := queue.emptyWait(); err != nil && len(queue.items) == 0{
+		if err := queue.emptyWait(); err != nil && len(queue.items) == 0 {
 			queue.locker.Unlock()
 			return nil, err
 		}
@@ -272,15 +272,15 @@ func (queue *QueueWithContext) Pop() (interface{}, error) {
 	return item, nil
 }
 
-func (queue *QueueWithContext) PopAll(buf []interface{}) ([]interface{}, error) {
+func (queue *QueueWithContext) PopAll(buf []interface{}) (items []interface{}, err error) {
 	queue.locker.Lock()
 	for len(queue.items) == 0 {
-		if err := queue.emptyWait(); err != nil && len(queue.items) == 0{
+		if err := queue.emptyWait(); err != nil && len(queue.items) == 0 {
 			queue.locker.Unlock()
 			return nil, err
 		}
 	}
-	items := queue.items
+	items = queue.items
 	queue.items = buf[:0]
 	queue.pos = 0
 	queue.locker.Unlock()
