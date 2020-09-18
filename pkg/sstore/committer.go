@@ -41,7 +41,7 @@ type committer struct {
 
 	indexTable  *indexTable
 	endWatchers *endWatchers
-	manifest    *manifest
+	manifest    *Manifest
 
 	blockSize int
 
@@ -56,7 +56,7 @@ func newCommitter(options Options,
 	sizeMap *int64LockMap,
 	mutableMStreamMap *mStreamTable,
 	queue *block_queue.Queue,
-	manifest *manifest,
+	manifest *Manifest,
 	blockSize int,
 	sstore *SStore) *committer {
 
@@ -163,7 +163,7 @@ func (c *committer) flushCallback(filename string) error {
 			c.indexTable.remove(mStream)
 		}
 	}
-	if err := c.manifest.appendSegment(&pb.AppendSegment{Filename: filename}); err != nil {
+	if err := c.manifest.AppendSegment(&pb.AppendSegment{Filename: filename}); err != nil {
 		log.Fatalf(err.Error())
 	}
 	if err := c.sstore.clearJournal(); err != nil {
@@ -180,14 +180,14 @@ func (c *committer) ReceiveSegmentFile(filename string) error {
 	}
 
 	//clear old segments
-	var segmentFiles = c.manifest.getSegmentFiles()
+	var segmentFiles = c.manifest.GetSegmentFiles()
 	if len(segmentFiles) != 0 {
 		sort.Strings(segmentFiles)
-		lastSegmentIndex, err := parseFilenameIndex(segmentFiles[len(segmentFiles)-1])
+		lastSegmentIndex, err := parseFileIndex(segmentFiles[len(segmentFiles)-1])
 		if err != nil {
 			panic(err)
 		}
-		segmentIndex, err := parseFilenameIndex(filename)
+		segmentIndex, err := parseFileIndex(filename)
 		if lastSegmentIndex != segmentIndex-1 {
 			for _, segmentFile := range segmentFiles {
 				if segment := c.getSegment(segmentFile); segment != nil {

@@ -14,13 +14,13 @@
 package sstore
 
 type flusher struct {
-	files *manifest
+	files *Manifest
 	items chan func()
 	c     chan interface{}
 	s     chan interface{}
 }
 
-func newFlusher(files *manifest) *flusher {
+func newFlusher(files *Manifest) *flusher {
 	return &flusher{
 		files: files,
 		items: make(chan func(), 1),
@@ -36,7 +36,7 @@ func (flusher *flusher) append(table *mStreamTable, cb func(segment string, err 
 }
 
 func (flusher *flusher) flushMStreamTable(table *mStreamTable) (string, error) {
-	var filename, _ = flusher.files.getNextSegment()
+	var filename, _ = flusher.files.GetNextSegment()
 	segment, err := createSegment(filename)
 	if err != nil {
 		return "", err

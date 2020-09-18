@@ -316,7 +316,7 @@ func TestSStore_GC(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 
-	if len(sstore.manifest.getSegmentFiles()) == 5 {
+	if len(sstore.manifest.GetSegmentFiles()) == 5 {
 		t.Fatalf("")
 	}
 }
@@ -360,7 +360,7 @@ func TestAsyncAppend(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 
-	if len(sstore.manifest.getSegmentFiles()) == 5 {
+	if len(sstore.manifest.GetSegmentFiles()) == 5 {
 		t.Fatalf("")
 	}
 }

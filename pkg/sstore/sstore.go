@@ -38,7 +38,7 @@ type SStore struct {
 	indexTable    *indexTable
 	endWatchers   *endWatchers
 	journalWriter *journalWriter
-	manifest      *manifest
+	manifest      *Manifest
 	isClose       int32
 	syncer        *Syncer
 }
@@ -175,7 +175,7 @@ func (sstore *SStore) Close() error {
 		return errors.New("repeated close")
 	}
 	sstore.journalWriter.close()
-	sstore.manifest.close()
+	sstore.manifest.Close()
 	sstore.endWatchers.close()
 	sstore.syncer.Close()
 	return nil
@@ -206,7 +206,7 @@ func (sstore *SStore) CreateSegmentWriter(filename string) (*SegmentWriter, erro
 	if err != nil {
 		return nil, err
 	}
-	if err := sstore.manifest.setSegmentIndex(segmentIndex); err != nil {
+	if err := sstore.manifest.SetSegmentIndex(segmentIndex); err != nil {
 		return nil, err
 	}
 	filename = filepath.Join(sstore.options.SegmentDir, filename)
