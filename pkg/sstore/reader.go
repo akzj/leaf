@@ -64,8 +64,8 @@ func (r *reader) Read(p []byte) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		if item.mStream != nil {
-			n, err := item.mStream.ReadAt(buf, r.offset)
+		if item.stream != nil {
+			n, err := item.stream.ReadAt(buf, r.offset)
 			if err != nil {
 				if err == io.EOF {
 					if size == 0 {

@@ -23,7 +23,7 @@ import (
 
 type offsetItem struct {
 	segment *segment
-	mStream *stream
+	stream  *stream
 	//[begin,end) exclude end
 	begin int64
 	end   int64
@@ -88,8 +88,8 @@ func (index *offsetIndex) insertOrUpdate(item offsetItem) error {
 			}
 			index.items[i].segment = item.segment
 		}
-		if item.mStream != nil {
-			index.items[i].mStream = item.mStream
+		if item.stream != nil {
+			index.items[i].stream = item.stream
 		}
 		return nil
 	} else {
@@ -119,10 +119,10 @@ func (index *offsetIndex) remove(item offsetItem) {
 			}
 			index.items[i].segment = nil
 		}
-		if item.mStream != nil {
-			index.items[i].mStream = nil
+		if item.stream != nil {
+			index.items[i].stream = nil
 		}
-		if index.items[i].mStream == nil && index.items[i].segment == nil {
+		if index.items[i].stream == nil && index.items[i].segment == nil {
 			copy(index.items[i:], index.items[i+1:])
 			index.items[len(index.items)-1] = offsetItem{}
 			index.items = index.items[:len(index.items)-1]
@@ -180,7 +180,7 @@ func (index *indexTable) update1(segment *segment) error {
 		segment.IncRef()
 		item := offsetItem{
 			segment: segment,
-			mStream: nil,
+			stream:  nil,
 			begin:   it.Begin,
 			end:     it.End,
 		}
@@ -199,7 +199,7 @@ func (index *indexTable) remove1(segment *segment) error {
 		if offsetIndex := index.get(info.StreamID); offsetIndex != nil {
 			offsetIndex.remove(offsetItem{
 				segment: segment,
-				mStream: nil,
+				stream:  nil,
 				begin:   info.Begin,
 				end:     info.End,
 			})
@@ -217,7 +217,7 @@ func (index *indexTable) remove1(segment *segment) error {
 func (index *indexTable) update(stream *stream) {
 	item := offsetItem{
 		segment: nil,
-		mStream: stream,
+		stream:  stream,
 		begin:   stream.begin,
 		end:     stream.end,
 	}
@@ -233,7 +233,7 @@ func (index *indexTable) remove(stream *stream) {
 	if offsetIndex := index.get(stream.streamID); offsetIndex != nil {
 		offsetIndex.remove(offsetItem{
 			segment: nil,
-			mStream: stream,
+			stream:  stream,
 			begin:   stream.begin,
 			end:     stream.end,
 		})

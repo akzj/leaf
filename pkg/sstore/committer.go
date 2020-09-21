@@ -78,14 +78,14 @@ func (c *committer) flush() {
 				c.flush()
 			}
 			request := item.(*WriteEntryRequest)
-			mStream, end := c.mutableMStreamMap.appendEntry(request.Entry)
+			stream, end := c.mutableMStreamMap.appendEntry(request.Entry)
 			if end == -1 {
 				request.err = ErrOffset
 				continue
 			}
 			request.end = end
-			if mStream != nil {
-				c.store.indexTable.update(mStream)
+			if stream != nil {
+				c.store.indexTable.update(stream)
 			}
 			err := c.store.streamWatcher.queue.Push(notify{
 				streamID: request.Entry.StreamID,
