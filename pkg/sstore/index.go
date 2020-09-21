@@ -56,13 +56,16 @@ func (index *offsetIndex) find(offset int64) (offsetItem, error) {
 	if len(index.items) == 0 {
 		return offsetIndexNoFind, errors.WithStack(ErrNoFindOffsetIndex)
 	}
-	if index.items[len(index.items)-1].end <= offset {
+	if index.items[len(index.items)-1].end < offset {
 		return index.items[len(index.items)-1], nil
 	}
 	i := sort.Search(len(index.items), func(i int) bool {
 		return offset < index.items[i].end
 	})
-	return index.items[i], nil
+	if i < len(index.items) {
+		return index.items[i], nil
+	}
+	return index.items[i-1], nil
 }
 
 func (index *offsetIndex) insertOrUpdate(item offsetItem) error {
@@ -78,7 +81,7 @@ func (index *offsetIndex) insertOrUpdate(item offsetItem) error {
 		return nil
 	}
 	i := sort.Search(len(index.items), func(i int) bool {
-		return index.items[i].begin >= item.begin
+		return item.begin <= index.items[i].begin
 	})
 	if i < len(index.items) && index.items[i].begin == item.begin {
 		index.items[i].end = item.end
@@ -110,7 +113,7 @@ func (index *offsetIndex) remove(item offsetItem) {
 	index.l.Lock()
 	defer index.l.Unlock()
 	i := sort.Search(len(index.items), func(i int) bool {
-		return index.items[i].begin >= item.begin
+		return item.begin <= index.items[i].begin
 	})
 	if i < len(index.items) && index.items[i].begin == item.begin {
 		if item.segment != nil {

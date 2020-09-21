@@ -65,8 +65,8 @@ func (m *streamTable) appendEntry(entry *pb.Entry, end *int64) (*stream, error) 
 	if err != nil {
 		return nil, err
 	}
-	*end = int64(n) + ms.end
-	m.endMap.set(entry.StreamID,*end, entry.Ver)
+	*end = ms.end
+	m.endMap.set(entry.StreamID, ms.end, entry.Ver)
 	m.size += int64(n)
 	m.to = entry.Ver
 	if m.from == nil {
