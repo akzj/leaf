@@ -14,8 +14,12 @@
 package sstore
 
 import (
+	"fmt"
 	block_queue "github.com/akzj/streamIO/pkg/block-queue"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	"os"
+	"path/filepath"
 )
 
 type flusher struct {
@@ -36,16 +40,14 @@ func newFlusher(manifest *Manifest, queue *block_queue.QueueWithContext) *flushe
 }
 
 func (flusher *flusher) flushMStreamTable(table *streamTable) (string, error) {
+	tempFile := filepath.Join(flusher.manifest.segmentDir, "tmp.seg")
+	if err := flushStreamTable(tempFile, table); err != nil {
+		return "", err
+	}
+
 	var filename, _ = flusher.manifest.GetNextSegment()
-	segment, err := createSegment(filename)
-	if err != nil {
-		return "", err
-	}
-	if err := segment.flushMStreamTable(table); err != nil {
-		return "", err
-	}
-	if err := segment.close(); err != nil {
-		return "", err
+	if err := os.Rename(tempFile, filename); err != nil {
+		return "", errors.WithMessage(err, fmt.Sprintf("remove %s to %s failed", tempFile, filename))
 	}
 	return filename, nil
 }

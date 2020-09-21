@@ -16,7 +16,6 @@ package sstore
 import (
 	"bufio"
 	"encoding/binary"
-	"fmt"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
 	"github.com/akzj/streamIO/pkg/utils"
 	"github.com/golang/protobuf/proto"
@@ -29,11 +28,11 @@ import (
 
 type segment struct {
 	*utils.RefCount
-	filename     string
-	f            *os.File
-	meta         *pb.SegmentMeta
-	l            *sync.RWMutex
-	delete       bool
+	filename string
+	f        *os.File
+	meta     *pb.SegmentMeta
+	l        *sync.RWMutex
+	delete   bool
 }
 
 func newSegment() *segment {
@@ -46,24 +45,13 @@ func newSegment() *segment {
 			CreateTS:    0,
 			OffSetInfos: map[int64]*pb.OffsetInfo{},
 		},
-		l:            new(sync.RWMutex),
-		delete:       false,
+		l:      new(sync.RWMutex),
+		delete: false,
 	}
 	sm.RefCount = utils.NewRefCount(0, func() {
 		_ = sm.close()
 	})
 	return sm
-}
-
-func createSegment(filename string) (*segment, error) {
-	f, err := os.Create(filename)
-	if err != nil {
-		return nil, err
-	}
-	segment := newSegment()
-	segment.f = f
-	segment.filename = filename
-	return segment, nil
 }
 
 func openSegment(filename string) (*segment, error) {
@@ -113,7 +101,6 @@ func (s *segment) FromVersion() *pb.Version {
 	return s.meta.From
 }
 
-
 func (s *segment) offsetInfo(streamID int64) (*pb.OffsetInfo, error) {
 	indexInfo, ok := s.meta.OffSetInfos[streamID]
 	if ok == false {
@@ -122,20 +109,53 @@ func (s *segment) offsetInfo(streamID int64) (*pb.OffsetInfo, error) {
 	return indexInfo, nil
 }
 
-func (s *segment) Reader(streamID int64) *segmentReader {
+func (s *segment) Reader(streamID int64) io.ReaderAt {
 	info, ok := s.meta.OffSetInfos[streamID]
 	if !ok {
 		return nil
 	}
 	return &segmentReader{
 		indexInfo: info,
-		r:         NewSectionReader(s.f, info.Offset, info.End-info.Begin),
+		r:         io.NewSectionReader(s.f, info.Offset, info.End-info.Begin),
 	}
 }
 
-func (s *segment) flushMStreamTable(table *streamTable) error {
+func (s *segment) deleteOnClose(delete bool) error {
 	s.l.Lock()
 	defer s.l.Unlock()
+	if s.f == nil {
+		return errors.Errorf("segment is close")
+	}
+	s.delete = delete
+	return nil
+}
+
+func (s *segment) close() error {
+	s.l.Lock()
+	defer s.l.Unlock()
+	if s.f == nil {
+		return nil
+	}
+	if err := s.f.Close(); err != nil {
+		return err
+	}
+	if s.delete {
+		if err := os.Remove(s.filename); err != nil {
+			return errors.WithStack(err)
+		}
+	}
+	s.f = nil
+	return nil
+}
+
+func flushStreamTable(filename string, table *streamTable) error {
+	f, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+	s := newSegment()
+	s.f = f
+	s.filename = filename
 	var Offset int64
 	writer := bufio.NewWriterSize(s.f, 1024*1024)
 	for streamID, mStream := range table.mStreams {
@@ -170,136 +190,8 @@ func (s *segment) flushMStreamTable(table *streamTable) error {
 	if err := writer.Flush(); err != nil {
 		return err
 	}
-	return nil
-}
-
-func (s *segment) deleteOnClose(delete bool) error {
-	s.l.Lock()
-	defer s.l.Unlock()
-	if s.f == nil {
-		return errors.Errorf("segment is close")
-	}
-	s.delete = delete
-	return nil
-}
-
-func (s *segment) close() error {
-	s.l.Lock()
-	defer s.l.Unlock()
-	if s.f == nil {
-		return nil
-	}
-	if err := s.f.Close(); err != nil {
+	if err := s.close(); err != nil {
 		return err
 	}
-	if s.delete {
-		if err := os.Remove(s.filename); err != nil {
-			return errors.WithStack(err)
-		}
-	}
-	s.f = nil
 	return nil
-}
-
-// NewSectionReader returns a SectionReader that reads from r
-// starting at offset off and stops with EOF after n bytes.
-func NewSectionReader(r io.ReaderAt, off int64, n int64) *SectionReader {
-	return &SectionReader{r, off, off, off + n}
-}
-
-// SectionReader implements Read, Seek, and ReadAt on a section
-// of an underlying ReaderAt.
-type SectionReader struct {
-	r     io.ReaderAt
-	base  int64
-	off   int64
-	limit int64
-}
-
-func (s *SectionReader) Read(p []byte) (n int, err error) {
-	if s.off >= s.limit {
-		return 0, io.EOF
-	}
-	if max := s.limit - s.off; int64(len(p)) > max {
-		p = p[0:max]
-	}
-	n, err = s.r.ReadAt(p, s.off)
-	s.off += int64(n)
-	return
-}
-
-var errWhence = errors.New("Seek: invalid whence")
-var errOffset = errors.New("Seek: invalid offset")
-
-func (s *SectionReader) Seek(offset int64, whence int) (int64, error) {
-	switch whence {
-	default:
-		return 0, errWhence
-	case io.SeekStart:
-		offset += s.base
-	case io.SeekCurrent:
-		offset += s.off
-	case io.SeekEnd:
-		offset += s.limit
-	}
-	if offset < s.base {
-		return 0, errOffset
-	}
-	s.off = offset
-	return offset - s.base, nil
-}
-
-func (s *SectionReader) ReadAt(p []byte, off int64) (n int, err error) {
-	if off < 0 || off >= s.limit-s.base {
-		return 0, io.EOF
-	}
-	off += s.base
-	if max := s.limit - off; int64(len(p)) > max {
-		p = p[0:max]
-		n, err = s.r.ReadAt(p, off)
-		if err == nil {
-			err = io.EOF
-		}
-		return n, err
-	}
-	return s.r.ReadAt(p, off)
-}
-
-// Size returns the end of the section in bytes.
-func (s *SectionReader) Size() int64 { return s.limit - s.base }
-
-type segmentReader struct {
-	indexInfo *pb.OffsetInfo
-	r         *SectionReader
-}
-
-func (s *segmentReader) Seek(offset int64, whence int) (int64, error) {
-	if offset < s.indexInfo.Begin || offset >= s.indexInfo.End {
-		return 0, ErrOffset
-	}
-	offset = offset - s.indexInfo.Begin
-	return s.r.Seek(offset, whence)
-}
-
-func (s *segmentReader) ReadAt(p []byte, offset int64) (n int, err error) {
-	if offset < s.indexInfo.Begin || offset >= s.indexInfo.End {
-		return 0, errors.Wrapf(ErrOffset,
-			fmt.Sprintf("offset[%d] begin[%d] end[%d]", offset, s.indexInfo.Begin, s.indexInfo.End))
-	}
-	size := s.indexInfo.End - offset
-	if int64(len(p)) > size {
-		p = p[:size]
-	}
-	offset = offset - s.indexInfo.Begin
-	n, err = s.r.ReadAt(p, offset)
-	if err == io.EOF {
-		if n != 0 {
-			return n, nil
-		}
-	}
-	return n, err
-}
-
-func (s *segmentReader) Read(p []byte) (n int, err error) {
-	return s.r.Read(p)
 }
