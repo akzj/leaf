@@ -47,7 +47,7 @@ type Store struct {
 	callbackWorker    *callbackWorker
 
 	immutableMStreamMapsLocker sync.Mutex
-	immutableMStreamMaps       []*mStreamTable
+	immutableMStreamMaps       []*streamTable
 
 	segmentsLocker sync.Mutex
 	segments       map[string]*segment
@@ -235,7 +235,7 @@ func (store *Store) appendSegment(filename string, segment *segment) {
 	}
 }
 
-func (store *Store) appendMStreamTable(streamMap *mStreamTable) {
+func (store *Store) appendMStreamTable(streamMap *streamTable) {
 	store.immutableMStreamMapsLocker.Lock()
 	defer store.immutableMStreamMapsLocker.Unlock()
 	store.immutableMStreamMaps = append(store.immutableMStreamMaps, streamMap)
@@ -246,7 +246,7 @@ func (store *Store) flushCallback(filename string) error {
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	var remove *mStreamTable
+	var remove *streamTable
 	store.immutableMStreamMapsLocker.Lock()
 	if len(store.immutableMStreamMaps) > store.options.MaxImmutableMStreamTableCount {
 		remove = store.immutableMStreamMaps[0]
@@ -334,7 +334,7 @@ func (store *Store) commitSegmentFile(filename string) error {
 	}
 
 	//clear memory table
-	store.committer.mutableMStreamMap = newMStreamTable(store.endMap,
+	store.committer.mutableMStreamMap = newStreamTable(store.endMap,
 		store.options.BlockSize, len(segment.meta.OffSetInfos))
 
 	//update version

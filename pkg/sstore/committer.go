@@ -21,7 +21,7 @@ import (
 type committer struct {
 	queue *block_queue.QueueWithContext
 
-	mutableMStreamMap *mStreamTable
+	mutableMStreamMap *streamTable
 
 	flushQueue *block_queue.QueueWithContext
 
@@ -38,7 +38,7 @@ func newCommitter(
 
 	return &committer{
 		queue:             queue,
-		mutableMStreamMap: newMStreamTable(store.endMap, store.options.BlockSize, 128),
+		mutableMStreamMap: newStreamTable(store.endMap, store.options.BlockSize, 128),
 		flushQueue:        flushQueue,
 		indexUpdateQueue:  updateIndexQueue,
 		store:             store,
@@ -49,7 +49,7 @@ func newCommitter(
 
 func (c *committer) flush() {
 	mStreamMap := c.mutableMStreamMap
-	c.mutableMStreamMap = newMStreamTable(mStreamMap.endMap, c.store.options.BlockSize,
+	c.mutableMStreamMap = newStreamTable(mStreamMap.endMap, c.store.options.BlockSize,
 		len(c.mutableMStreamMap.mStreams))
 
 	c.store.appendMStreamTable(mStreamMap)

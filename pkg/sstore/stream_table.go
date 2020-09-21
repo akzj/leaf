@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-type mStreamTable struct {
+type streamTable struct {
 	locker    sync.Mutex
 	mSize     int64
 	from      *pb.Version // first version
@@ -30,9 +30,9 @@ type mStreamTable struct {
 	blockSize int
 }
 
-func newMStreamTable(sizeMap *int64LockMap,
-	blockSize int, mStreamMapSize int) *mStreamTable {
-	return &mStreamTable{
+func newStreamTable(sizeMap *int64LockMap,
+	blockSize int, mStreamMapSize int) *streamTable {
+	return &streamTable{
 		locker:    sync.Mutex{},
 		mSize:     0,
 		from:      nil,
@@ -44,7 +44,7 @@ func newMStreamTable(sizeMap *int64LockMap,
 	}
 }
 
-func (m *mStreamTable) loadOrCreateMStream(streamID int64) (*stream, bool) {
+func (m *streamTable) loadOrCreateMStream(streamID int64) (*stream, bool) {
 	m.locker.Lock()
 	ms, ok := m.mStreams[streamID]
 	if ok {
@@ -59,7 +59,7 @@ func (m *mStreamTable) loadOrCreateMStream(streamID int64) (*stream, bool) {
 }
 
 //appendEntry append *pb.Entry to stream,and return the stream if it create
-func (m *mStreamTable) appendEntry(entry *pb.Entry) (*stream, int64) {
+func (m *streamTable) appendEntry(entry *pb.Entry) (*stream, int64) {
 	ms, load := m.loadOrCreateMStream(entry.StreamID)
 	end := ms.write(entry.Offset, entry.Data)
 	if end == -1 {

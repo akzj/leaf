@@ -133,7 +133,7 @@ func (s *segment) Reader(streamID int64) *segmentReader {
 	}
 }
 
-func (s *segment) flushMStreamTable(table *mStreamTable) error {
+func (s *segment) flushMStreamTable(table *streamTable) error {
 	s.l.Lock()
 	defer s.l.Unlock()
 	var Offset int64

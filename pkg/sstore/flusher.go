@@ -24,7 +24,7 @@ type flusher struct {
 }
 
 type flushSegment struct {
-	mStreamTable *mStreamTable
+	mStreamTable *streamTable
 	callback     func(filename string, err error)
 }
 
@@ -35,7 +35,7 @@ func newFlusher(manifest *Manifest, queue *block_queue.QueueWithContext) *flushe
 	}
 }
 
-func (flusher *flusher) flushMStreamTable(table *mStreamTable) (string, error) {
+func (flusher *flusher) flushMStreamTable(table *streamTable) (string, error) {
 	var filename, _ = flusher.manifest.GetNextSegment()
 	segment, err := createSegment(filename)
 	if err != nil {
