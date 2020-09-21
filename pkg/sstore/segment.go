@@ -161,7 +161,7 @@ func flushStreamTable(filename string, table *streamTable) error {
 	for streamID, mStream := range table.mStreams {
 		hash := crc32.NewIEEE()
 		mWriter := io.MultiWriter(writer, hash)
-		n, err := mStream.writeTo(mWriter)
+		n, err := mStream.WriteTo(mWriter)
 		if err != nil {
 			return err
 		}

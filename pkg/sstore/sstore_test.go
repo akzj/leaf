@@ -122,7 +122,7 @@ func TestReader(t *testing.T) {
 
 	writer := crc32.NewIEEE()
 
-	log.Info("start write test")
+	log.Info("start Write test")
 
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
@@ -137,7 +137,7 @@ func TestReader(t *testing.T) {
 	}
 	wg.Wait()
 
-	log.Info("write done")
+	log.Info("Write done")
 
 	sum32 := writer.Sum32()
 	size, ok := sstore.End(streamID)

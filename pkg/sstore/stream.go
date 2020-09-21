@@ -14,9 +14,9 @@
 package sstore
 
 import (
+	"fmt"
 	"github.com/pkg/errors"
 	"io"
-	"math"
 	"sync"
 )
 
@@ -29,8 +29,6 @@ type stream struct {
 	pageSize int
 	Pages    []page
 }
-
-const mStreamEnd = math.MaxInt64
 
 func newStream(offset int64, pageSize int, streamID int64) *stream {
 	return &stream{
@@ -75,12 +73,13 @@ func (m *stream) ReadAt(p []byte, off int64) (n int, err error) {
 	return ret, nil
 }
 
-func (m *stream) write(offset int64, p []byte) int64 {
+func (m *stream) WriteAt(p []byte, offset int64, ) (int, error) {
 	m.locker.Lock()
 	defer m.locker.Unlock()
 	if offset != -1 && m.end != offset {
-		return -1
+		return 0, fmt.Errorf("offset error")
 	}
+	var size = len(p)
 	for len(p) > 0 {
 		if m.Pages[len(m.Pages)-1].limit == m.pageSize {
 			m.Pages = append(m.Pages, newPage(m.end, m.pageSize))
@@ -91,15 +90,15 @@ func (m *stream) write(offset int64, p []byte) int64 {
 		m.end += int64(n)
 		p = p[n:]
 	}
-	return m.end
+	return size, nil
 }
 
-func (m *stream) writeTo(writer io.Writer) (int, error) {
+func (m *stream) WriteTo(writer io.Writer) (int64, error) {
 	m.locker.RLock()
 	defer m.locker.RUnlock()
-	var n int
+	var n int64
 	for i := range m.Pages {
-		ret, err := (&m.Pages[i]).writeTo(writer)
+		ret, err := (&m.Pages[i]).WriteTo(writer)
 		n += ret
 		if err != nil {
 			return n, err
@@ -122,6 +121,10 @@ func newPage(begin int64, blockSize int) page {
 	}
 }
 
-func (p *page) writeTo(writer io.Writer) (int, error) {
-	return writer.Write(p.buf[:p.limit])
+func (p *page) WriteTo(writer io.Writer) (int64, error) {
+	n, err := writer.Write(p.buf[:p.limit])
+	if err != nil {
+		return 0, errors.WithStack(err)
+	}
+	return int64(n), err
 }

@@ -66,39 +66,6 @@ func (c *committer) flush() {
 	}
 }
 
-/*func (c *committer) processLoop() {
-	for {
-		items, err := c.queue.PopAll(nil)
-		if err != nil {
-			log.Warn(err)
-			return
-		}
-		for _, item := range items {
-			if c.mutableMStreamMap.mSize >= c.store.options.MaxMStreamTableSize {
-				c.flush()
-			}
-			request := item.(*WriteEntryRequest)
-			stream, end := c.mutableMStreamMap.appendEntry(request.Entry)
-			if end == -1 {
-				request.err = ErrOffset
-				continue
-			}
-			request.end = end
-			if stream != nil {
-				c.store.indexTable.update(stream)
-			}
-			err := c.store.streamWatcher.queue.Push(notify{
-				streamID: request.Entry.StreamID,
-				end:      end,
-			})
-			if err != nil {
-				log.Fatal(err)
-			}
-		}
-		c.store.callbackWorker.queue.PushMany(items)
-	}
-}*/
-
 
 func (c *committer) processLoop() {
 	var mStreams = make([]*stream, 0, 128)
@@ -110,22 +77,21 @@ func (c *committer) processLoop() {
 		}
 		var notifies = make([]interface{}, 0, len(items))
 		for _, item := range items {
-			if c.mutableMStreamMap.mSize >= c.store.options.MaxMStreamTableSize {
+			if c.mutableMStreamMap.size >= c.store.options.MaxMStreamTableSize {
 				c.flush()
 			}
 			request := item.(*WriteEntryRequest)
-			mStream, end := c.mutableMStreamMap.appendEntry(request.Entry)
-			if end == -1 {
-				request.err = ErrOffset
+			mStream, err := c.mutableMStreamMap.appendEntry(request.Entry, &request.end)
+			if err != nil {
+				request.err = err
 				continue
 			}
-			request.end = end
 			if mStream != nil {
 				mStreams = append(mStreams, mStream)
 			}
 			notifies = append(notifies, notify{
 				streamID: request.Entry.StreamID,
-				end:      end,
+				end:      request.end,
 			})
 		}
 		update := updateIndexTable{
@@ -141,4 +107,3 @@ func (c *committer) processLoop() {
 		}
 	}
 }
-

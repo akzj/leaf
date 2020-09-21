@@ -21,7 +21,7 @@ import (
 
 type streamTable struct {
 	locker    sync.Mutex
-	mSize     int64
+	size      int64
 	from      *pb.Version // first version
 	to        *pb.Version //last version, include
 	endMap    *int64LockMap
@@ -34,7 +34,7 @@ func newStreamTable(sizeMap *int64LockMap,
 	blockSize int, mStreamMapSize int) *streamTable {
 	return &streamTable{
 		locker:    sync.Mutex{},
-		mSize:     0,
+		size:      0,
 		from:      nil,
 		to:        nil,
 		endMap:    sizeMap,
@@ -44,7 +44,7 @@ func newStreamTable(sizeMap *int64LockMap,
 	}
 }
 
-func (m *streamTable) loadOrCreateMStream(streamID int64) (*stream, bool) {
+func (m *streamTable) loadOrCreateStream(streamID int64) (*stream, bool) {
 	m.locker.Lock()
 	ms, ok := m.mStreams[streamID]
 	if ok {
@@ -59,20 +59,21 @@ func (m *streamTable) loadOrCreateMStream(streamID int64) (*stream, bool) {
 }
 
 //appendEntry append *pb.Entry to stream,and return the stream if it create
-func (m *streamTable) appendEntry(entry *pb.Entry) (*stream, int64) {
-	ms, load := m.loadOrCreateMStream(entry.StreamID)
-	end := ms.write(entry.Offset, entry.Data)
-	if end == -1 {
-		return nil, -1
+func (m *streamTable) appendEntry(entry *pb.Entry, end *int64) (*stream, error) {
+	ms, load := m.loadOrCreateStream(entry.StreamID)
+	n, err := ms.WriteAt(entry.Data, entry.Offset)
+	if err != nil {
+		return nil, err
 	}
-	m.endMap.set(entry.StreamID, end, entry.Ver)
-	m.mSize += int64(len(entry.Data))
+	*end = int64(n) + ms.end
+	m.endMap.set(entry.StreamID,*end, entry.Ver)
+	m.size += int64(n)
 	m.to = entry.Ver
 	if m.from == nil {
 		m.from = entry.Ver
 	}
 	if load {
-		return nil, end
+		return nil, nil
 	}
-	return ms, end
+	return ms, nil
 }
