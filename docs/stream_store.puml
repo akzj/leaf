@@ -1,0 +1,36 @@
+@startuml
+
+actor user
+
+user->journalWriter:enqueue
+
+group write journal
+journalWriter->journal:write journal
+activate journal
+return success
+deactivate journal
+end
+
+journalWriter->committer:enqueue
+
+
+group write memory stream
+committer->streamTable:appendEntry
+
+activate streamTable
+streamTable->stream:write
+activate stream
+
+return success
+return success
+
+deactivate  stream
+deactivate streamTable
+
+end
+
+committer-> callbackWorker:enqueue
+
+callbackWorker-->user:callback(error,offset)
+
+@enduml
