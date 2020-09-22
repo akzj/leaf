@@ -59,10 +59,9 @@ func (store *Store) init() error {
 
 	commitQueue := block_queue.NewQueueWithContext(store.ctx, store.options.RequestQueueCap)
 	callbackQueue := block_queue.NewQueueWithContext(store.ctx, store.options.RequestQueueCap)
-	flushSegmentQueue := block_queue.NewQueueWithContext(store.ctx, store.options.RequestQueueCap)
+	flushSegmentQueue := block_queue.NewQueueWithContext(store.ctx, store.options.SegmentFlushQueue)
 	notifyQueue := block_queue.NewQueueWithContext(store.ctx, store.options.RequestQueueCap)
 	journalQueue := block_queue.NewQueueWithContext(store.ctx, store.options.RequestQueueCap)
-
 
 	store.streamWatcher = newStreamWatcher(notifyQueue)
 	store.entryQueue = journalQueue
@@ -80,7 +79,7 @@ func (store *Store) init() error {
 		flushSegmentQueue,
 		store.indexTableUpdater.queue)
 	store.syncer = newSyncer(store)
-	store.flusher = newFlusher(manifest, flushSegmentQueue)
+	store.flusher = newSegmentFlusher(store.options.SegmentDir, flushSegmentQueue)
 
 	store.gogo(store.callbackWorker.callbackLoop)
 	store.gogo(store.flusher.flushLoop)
@@ -140,7 +139,7 @@ func (store *Store) init() error {
 				return nil
 			} else if entry.Ver.Index == store.version.Index+1 {
 				store.version = entry.Ver
-				if err := store.committer.queue.Push(&WriteEntryRequest{
+				if err := store.committer.queue.Push(&WriteEntry{
 					Entry: entry,
 					cb:    func(end int64, err error) {},
 				}); err != nil {
@@ -236,7 +235,7 @@ func (worker *callbackWorker) callbackLoop() {
 			return
 		}
 		for _, item := range items {
-			request := item.(*WriteEntryRequest)
+			request := item.(*WriteEntry)
 			request.cb(request.end, request.err)
 		}
 	}

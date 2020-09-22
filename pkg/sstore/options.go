@@ -30,6 +30,7 @@ type Options struct {
 	MaxMStreamTableSize           int64  `json:"max_mStream_table_size"`
 	MaxImmutableMStreamTableCount int    `json:"max_immutable_mStream_table_count"`
 	RequestQueueCap               int    `json:"request_queue_cap"`
+	SegmentFlushQueue             int    `json:"segment_flush_queue"`
 	MaxJournalSize                int64  `json:"max_journal_size"`
 }
 
@@ -48,6 +49,7 @@ func DefaultOptions(Path string) Options {
 		MaxMStreamTableSize:           256 * MB,
 		MaxImmutableMStreamTableCount: 0,
 		RequestQueueCap:               1024,
+		SegmentFlushQueue:             1,
 		MaxJournalSize:                128 * MB,
 	}
 }

@@ -26,12 +26,12 @@ type streamTable struct {
 	to        *pb.Version //last version, include
 	endMap    *int64LockMap
 	CreateTS  time.Time
-	mStreams  map[int64]*stream
+	streams   map[int64]*stream
 	blockSize int
 }
 
 func newStreamTable(sizeMap *int64LockMap,
-	blockSize int, mStreamMapSize int) *streamTable {
+	blockSize int, streamCount int) *streamTable {
 	return &streamTable{
 		locker:    sync.Mutex{},
 		size:      0,
@@ -39,21 +39,21 @@ func newStreamTable(sizeMap *int64LockMap,
 		to:        nil,
 		endMap:    sizeMap,
 		CreateTS:  time.Now(),
-		mStreams:  make(map[int64]*stream, mStreamMapSize),
+		streams:   make(map[int64]*stream, streamCount),
 		blockSize: blockSize,
 	}
 }
 
 func (m *streamTable) loadOrCreateStream(streamID int64) (*stream, bool) {
 	m.locker.Lock()
-	ms, ok := m.mStreams[streamID]
+	ms, ok := m.streams[streamID]
 	if ok {
 		m.locker.Unlock()
 		return ms, true
 	}
 	size, _ := m.endMap.get(streamID)
 	ms = newStream(size, m.blockSize, streamID)
-	m.mStreams[streamID] = ms
+	m.streams[streamID] = ms
 	m.locker.Unlock()
 	return ms, false
 }

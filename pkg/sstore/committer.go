@@ -19,15 +19,11 @@ import (
 )
 
 type committer struct {
-	queue *block_queue.QueueWithContext
-
-	mutableMStreamMap *streamTable
-
-	flushQueue *block_queue.QueueWithContext
-
+	store            *Store
+	streamTable      *streamTable
+	queue            *block_queue.QueueWithContext
+	flushQueue       *block_queue.QueueWithContext
 	indexUpdateQueue *block_queue.QueueWithContext
-
-	store *Store
 }
 
 func newCommitter(
@@ -37,24 +33,22 @@ func newCommitter(
 	updateIndexQueue *block_queue.QueueWithContext) *committer {
 
 	return &committer{
-		queue:             queue,
-		mutableMStreamMap: newStreamTable(store.endMap, store.options.BlockSize, 128),
-		flushQueue:        flushQueue,
-		indexUpdateQueue:  updateIndexQueue,
-		store:             store,
+		store:            store,
+		streamTable:      newStreamTable(store.endMap, store.options.BlockSize, 128),
+		queue:            queue,
+		flushQueue:       flushQueue,
+		indexUpdateQueue: updateIndexQueue,
 	}
 }
 
-//commitSegmentFile receive segment file from master,and append segment to local store
-
 func (c *committer) flush() {
-	mStreamMap := c.mutableMStreamMap
-	c.mutableMStreamMap = newStreamTable(mStreamMap.endMap, c.store.options.BlockSize,
-		len(c.mutableMStreamMap.mStreams))
+	mStreamMap := c.streamTable
+	c.streamTable = newStreamTable(mStreamMap.endMap, c.store.options.BlockSize,
+		len(c.streamTable.streams))
 
-	c.store.appendMStreamTable(mStreamMap)
+	c.store.appendStreamTable(mStreamMap)
 
-	if err := c.flushQueue.Push(flushSegment{mStreamTable: mStreamMap, callback: func(filename string, err error) {
+	if err := c.flushQueue.Push(flushSegment{streamTable: mStreamMap, callback: func(filename string, err error) {
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -66,7 +60,6 @@ func (c *committer) flush() {
 	}
 }
 
-
 func (c *committer) processLoop() {
 	var mStreams = make([]*stream, 0, 128)
 	for {
@@ -77,11 +70,11 @@ func (c *committer) processLoop() {
 		}
 		var notifies = make([]interface{}, 0, len(items))
 		for _, item := range items {
-			if c.mutableMStreamMap.size >= c.store.options.MaxMStreamTableSize {
+			if c.streamTable.size >= c.store.options.MaxMStreamTableSize {
 				c.flush()
 			}
-			request := item.(*WriteEntryRequest)
-			mStream, err := c.mutableMStreamMap.appendEntry(request.Entry, &request.end)
+			request := item.(*WriteEntry)
+			mStream, err := c.streamTable.appendEntry(request.Entry, &request.end)
 			if err != nil {
 				request.err = err
 				continue

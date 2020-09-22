@@ -48,8 +48,8 @@ func newJournalWriter(journal *journal,
 	}
 }
 
-//append the WriteEntryRequest to the queue of writer
-func (jWriter *journalWriter) append(e *WriteEntryRequest) {
+//append the WriteEntry to the queue of writer
+func (jWriter *journalWriter) append(e *WriteEntry) {
 	jWriter.queue.Push(e)
 }
 
@@ -91,7 +91,7 @@ func (jWriter *journalWriter) writeLoop() {
 			return
 		}
 		for _, item := range items {
-			request := item.(*WriteEntryRequest)
+			request := item.(*WriteEntry)
 			if jWriter.journal.Size() > jWriter.maxJournalSize {
 				if err := jWriter.createNewJournal(); err != nil {
 					request.cb(-1, err)

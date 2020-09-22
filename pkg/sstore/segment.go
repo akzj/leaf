@@ -153,19 +153,19 @@ func flushStreamTable(filename string, table *streamTable) error {
 	if err != nil {
 		return err
 	}
-	s := newSegment()
-	s.f = f
-	s.filename = filename
+	seg := newSegment()
+	seg.f = f
+	seg.filename = filename
 	var Offset int64
-	writer := bufio.NewWriterSize(s.f, 1024*1024)
-	for streamID, mStream := range table.mStreams {
+	writer := bufio.NewWriterSize(seg.f, 1024*1024)
+	for streamID, mStream := range table.streams {
 		hash := crc32.NewIEEE()
 		mWriter := io.MultiWriter(writer, hash)
 		n, err := mStream.WriteTo(mWriter)
 		if err != nil {
 			return err
 		}
-		s.meta.OffSetInfos[streamID] = &pb.OffsetInfo{
+		seg.meta.OffSetInfos[streamID] = &pb.OffsetInfo{
 			StreamID: streamID,
 			Offset:   Offset,
 			CRC:      hash.Sum32(),
@@ -174,10 +174,10 @@ func flushStreamTable(filename string, table *streamTable) error {
 		}
 		Offset += int64(n)
 	}
-	s.meta.From = table.from
-	s.meta.To = table.to
-	s.meta.CreateTS = table.CreateTS.Unix()
-	data, err := proto.Marshal(s.meta)
+	seg.meta.From = table.from
+	seg.meta.To = table.to
+	seg.meta.CreateTS = table.CreateTS.Unix()
+	data, err := proto.Marshal(seg.meta)
 	if err != nil {
 		return err
 	}
@@ -190,7 +190,7 @@ func flushStreamTable(filename string, table *streamTable) error {
 	if err := writer.Flush(); err != nil {
 		return err
 	}
-	if err := s.close(); err != nil {
+	if err := seg.close(); err != nil {
 		return err
 	}
 	return nil

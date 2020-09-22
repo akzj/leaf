@@ -42,7 +42,7 @@ type Store struct {
 	journalWriter     *journalWriter
 	manifest          *Manifest
 	syncer            *Syncer
-	flusher           *flusher
+	flusher           *segmentFlusher
 	indexTableUpdater *indexTableUpdater
 	callbackWorker    *callbackWorker
 
@@ -62,7 +62,7 @@ type Snapshot struct {
 	Version *pb.Version     `json:"version"`
 }
 
-type WriteEntryRequest struct {
+type WriteEntry struct {
 	Entry *pb.Entry
 	end   int64
 	err   error
@@ -110,7 +110,7 @@ func (store *Store) nextEntryID() int64 {
 
 //AsyncAppend async append the data to end of the stream
 func (store *Store) AsyncAppend(streamID int64, data []byte, offset int64, cb func(offset int64, err error)) {
-	if err := store.entryQueue.Push(&WriteEntryRequest{
+	if err := store.entryQueue.Push(&WriteEntry{
 		Entry: &pb.Entry{
 			StreamID: streamID,
 			Offset:   offset,
@@ -129,7 +129,7 @@ func (store *Store) AsyncAppend(streamID int64, data []byte, offset int64, cb fu
 //AsyncAppend async append the data to end of the stream
 func (store *Store) AppendEntryWithCb(entry *pb.Entry, cb func(offset int64, err error)) {
 	store.version = entry.Ver
-	store.entryQueue.Push(&WriteEntryRequest{
+	store.entryQueue.Push(&WriteEntry{
 		Entry: entry,
 		end:   0,
 		err:   nil,
@@ -235,14 +235,24 @@ func (store *Store) appendSegment(filename string, segment *segment) {
 	}
 }
 
-func (store *Store) appendMStreamTable(streamMap *streamTable) {
+func (store *Store) appendStreamTable(streamMap *streamTable) {
 	store.immutableMStreamMapsLocker.Lock()
 	defer store.immutableMStreamMapsLocker.Unlock()
 	store.immutableMStreamMaps = append(store.immutableMStreamMaps, streamMap)
 }
 
 func (store *Store) flushCallback(filename string) error {
-	segment, err := openSegment(filename)
+	nextSegment, err := store.manifest.GetNextSegment()
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(filename, nextSegment); err != nil {
+		return errors.WithStack(err)
+	}
+	if err := store.manifest.AppendSegment(&pb.AppendSegment{Filename: nextSegment}); err != nil {
+		return err
+	}
+	segment, err := openSegment(nextSegment)
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -256,15 +266,12 @@ func (store *Store) flushCallback(filename string) error {
 	}
 	store.immutableMStreamMapsLocker.Unlock()
 
-	store.appendSegment(filename, segment)
+	store.appendSegment(nextSegment, segment)
 	//remove from indexTable
 	if remove != nil {
-		for _, mStream := range remove.mStreams {
+		for _, mStream := range remove.streams {
 			store.indexTable.remove(mStream)
 		}
-	}
-	if err := store.manifest.AppendSegment(&pb.AppendSegment{Filename: filename}); err != nil {
-		log.Fatalf(err.Error())
 	}
 	if err := store.clearJournal(); err != nil {
 		log.Fatalf(err.Error())
@@ -334,7 +341,7 @@ func (store *Store) commitSegmentFile(filename string) error {
 	}
 
 	//clear memory table
-	store.committer.mutableMStreamMap = newStreamTable(store.endMap,
+	store.committer.streamTable = newStreamTable(store.endMap,
 		store.options.BlockSize, len(segment.meta.OffSetInfos))
 
 	//update version

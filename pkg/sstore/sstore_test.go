@@ -39,8 +39,8 @@ func TestOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	if sstore.committer.mutableMStreamMap == nil {
-		t.Fatal(sstore.committer.mutableMStreamMap)
+	if sstore.committer.streamTable == nil {
+		t.Fatal(sstore.committer.streamTable)
 	}
 	var wg sync.WaitGroup
 	wg.Add(1)

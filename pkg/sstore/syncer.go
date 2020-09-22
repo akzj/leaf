@@ -252,7 +252,7 @@ func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f 
 					}
 					return err
 				}
-				entry := item.(*WriteEntryRequest).Entry
+				entry := item.(*WriteEntry).Entry
 				if entry.Ver.Index < atomic.LoadInt64(&index) {
 					continue
 				} else if entry.Ver.Index == atomic.LoadInt64(&index) {
