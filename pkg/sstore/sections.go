@@ -15,16 +15,17 @@ package sstore
 
 import (
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"sort"
 	"sync"
 )
 
+//[begin,end) exclude end
 type Section struct {
 	segment *segment
 	stream  *stream
-	//[begin,end) exclude end
-	begin int64
-	end   int64
+	begin   int64
+	end     int64
 }
 
 type Sections struct {
@@ -48,22 +49,22 @@ func (sections *Sections) getSections() []Section {
 	return append(make([]Section, 0, len(sections.sections)), sections.sections...)
 }
 
-func (sections *Sections) find(offset int64) (Section, error) {
+func (sections *Sections) find(offset int64) (Section, bool, error) {
 	sections.l.RLock()
 	defer sections.l.RUnlock()
 	if len(sections.sections) == 0 {
-		return streamSectionNoFind, errors.WithStack(ErrNoFindSection)
+		return streamSectionNoFind, false, errors.WithStack(ErrNoFindSection)
 	}
 	if sections.sections[len(sections.sections)-1].end < offset {
-		return sections.sections[len(sections.sections)-1], nil
+		return sections.sections[len(sections.sections)-1], false, nil
 	}
 	i := sort.Search(len(sections.sections), func(i int) bool {
 		return offset < sections.sections[i].end
 	})
 	if i < len(sections.sections) {
-		return sections.sections[i], nil
+		return sections.sections[i], false, nil
 	}
-	return sections.sections[i-1], nil
+	return sections.sections[i-1], true, nil
 }
 
 func (sections *Sections) insertOrUpdate(section Section) error {
@@ -98,6 +99,13 @@ func (sections *Sections) insertOrUpdate(section Section) error {
 			section.begin, section.end)
 	}
 }
+
+func (sections *Sections) empty() bool {
+	sections.l.RLock()
+	defer sections.l.RUnlock()
+	return len(sections.sections) == 0
+}
+
 func (sections *Sections) begin() (int64, bool) {
 	sections.l.RLock()
 	defer sections.l.RUnlock()
@@ -116,7 +124,7 @@ func (sections *Sections) remove(section Section) {
 	if i < len(sections.sections) && sections.sections[i].begin == section.begin {
 		if section.segment != nil {
 			if sections.sections[i].segment == nil {
-				panic("segment null")
+				log.Fatal("segment nil")
 			}
 			sections.sections[i].segment = nil
 		}
@@ -129,8 +137,6 @@ func (sections *Sections) remove(section Section) {
 			sections.sections = sections.sections[:len(sections.sections)-1]
 		}
 	} else {
-		panic("sections remove error")
+		panic("sections RemoveSectionWithStream error")
 	}
 }
-
-

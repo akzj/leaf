@@ -158,7 +158,7 @@ func TestReader(t *testing.T) {
 		t.Fatal(ok)
 	}
 
-	/*for _, it := range store.sectionsTable.get(streamID).sections {
+	/*for _, it := range store.sectionsTable.Get(streamID).sections {
 		if it.stream != nil {
 			fmt.Printf("stream [%d-%d) \n", it.stream.begin, it.stream.end)
 		} else
@@ -168,7 +168,7 @@ func TestReader(t *testing.T) {
 		}
 	}*/
 
-	info, err := sstore.sectionsTable.get(streamID).find(521)
+	info, _, err := sstore.sectionsTable.Get(streamID).find(521)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -248,7 +248,7 @@ func TestSStore_Watcher(t *testing.T) {
 			t.Fatalf("%+v", err)
 		}
 		if len(readAll) > 0 {
-			t.Fatalf("reader no data remain")
+			t.Fatalf("Reader no data remain")
 		}
 
 		watcher := sstore.Watcher(streamID)

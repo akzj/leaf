@@ -65,7 +65,7 @@ func TestSortSearch(t *testing.T) {
 		i := sort.Search(len(ints), func(i int) bool {
 			return s.find < ints[i]
 		})
-		assert.Equal(t, ints[i], s.expect,fmt.Sprintf("%d %d %d",s.find,s.expect,ints[i]))
+		assert.Equal(t, ints[i], s.expect, fmt.Sprintf("%d %d %d", s.find, s.expect, ints[i]))
 	}
 }
 
@@ -115,7 +115,7 @@ func TestSections(t *testing.T) {
 
 	t.Run("find_segment", func(t *testing.T) {
 		for i := int64(1); i <= offsets[len(offsets)-1].end; i++ {
-			item, err := sections.find(i)
+			item, _, err := sections.find(i)
 			assert.NoError(t, err)
 			assert.NotNil(t, item.segment)
 			assert.True(t, item.begin <= i && i <= item.end, fmt.Sprintf("%d %d %d", item.begin, i, item.end))
@@ -138,7 +138,7 @@ func TestSections(t *testing.T) {
 
 	t.Run("find_m_stream", func(t *testing.T) {
 		for i := int64(1); i <= offsets[len(offsets)-1].end; i++ {
-			item, err := sections.find(i)
+			item, _, err := sections.find(i)
 			assert.NoError(t, err)
 			assert.NotNil(t, item.segment)
 			assert.NotNil(t, item.stream)
@@ -154,7 +154,7 @@ func TestSections(t *testing.T) {
 				begin:   offset.begin,
 				end:     offset.end,
 			})
-			item, err := sections.find(offset.begin)
+			item, _, err := sections.find(offset.begin)
 			assert.NoError(t, err)
 			assert.NotNil(t, item.stream)
 			assert.Nil(t, item.segment)
@@ -171,7 +171,7 @@ func TestSections(t *testing.T) {
 				begin: offset.begin,
 				end:   offset.end,
 			})
-			item, err := sections.find(offset.begin)
+			item, _, err := sections.find(offset.begin)
 			if err != nil {
 				assert.NotEqual(t, item.begin, offset.begin)
 			}

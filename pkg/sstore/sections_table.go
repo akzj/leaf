@@ -42,7 +42,7 @@ func (table *sectionsTable) removeEmptySections(streamID int64) {
 	}
 }
 
-func (table *sectionsTable) get(streamID int64) *Sections {
+func (table *sectionsTable) Get(streamID int64) *Sections {
 	table.l.Lock()
 	defer table.l.Unlock()
 	if sections, ok := table.sectionsMap[streamID]; ok {
@@ -51,18 +51,18 @@ func (table *sectionsTable) get(streamID int64) *Sections {
 	return nil
 }
 
-func (table *sectionsTable) loadOrCreate(streamID int64, item Section) (*Sections, bool) {
+func (table *sectionsTable) loadOrCreate(streamID int64, section Section) (*Sections, bool) {
 	table.l.Lock()
 	defer table.l.Unlock()
 	if sections, ok := table.sectionsMap[streamID]; ok {
 		return sections, true
 	}
-	section := newSection(streamID, item)
-	table.sectionsMap[streamID] = section
-	return section, false
+	sections := newSection(streamID, section)
+	table.sectionsMap[streamID] = sections
+	return sections, false
 }
 
-func (table *sectionsTable) update1(segment *segment) error {
+func (table *sectionsTable) UpdateSectionWithSegment(segment *segment) error {
 	for _, it := range segment.meta.OffSetInfos {
 		segment.IncRef()
 		section := Section{
@@ -80,9 +80,9 @@ func (table *sectionsTable) update1(segment *segment) error {
 	return nil
 }
 
-func (table *sectionsTable) remove1(segment *segment) error {
+func (table *sectionsTable) removeSectionWithSegment(segment *segment) error {
 	for _, info := range segment.meta.OffSetInfos {
-		if sections := table.get(info.StreamID); sections != nil {
+		if sections := table.Get(info.StreamID); sections != nil {
 			sections.remove(Section{
 				segment: segment,
 				stream:  nil,
@@ -90,7 +90,7 @@ func (table *sectionsTable) remove1(segment *segment) error {
 				end:     info.End,
 			})
 			segment.DecRef()
-			if _, ok := sections.begin(); ok == false {
+			if sections.empty() {
 				table.removeEmptySections(info.StreamID)
 			}
 		} else {
@@ -100,30 +100,29 @@ func (table *sectionsTable) remove1(segment *segment) error {
 	return nil
 }
 
-func (table *sectionsTable) update(stream *stream) {
+func (table *sectionsTable) UpdateSectionWithStream(stream *stream) {
 	item := Section{
 		segment: nil,
 		stream:  stream,
 		begin:   stream.begin,
 		end:     stream.end,
 	}
-	sections, loaded := table.loadOrCreate(stream.streamID, item)
-	if loaded {
+	if sections, loaded := table.loadOrCreate(stream.streamID, item); loaded {
 		if err := sections.insertOrUpdate(item); err != nil {
-			log.Panicf("%+v", err)
+			log.Panic(err)
 		}
 	}
 }
 
-func (table *sectionsTable) remove(stream *stream) {
-	if sections := table.get(stream.streamID); sections != nil {
+func (table *sectionsTable) RemoveSectionWithStream(stream *stream) {
+	if sections := table.Get(stream.streamID); sections != nil {
 		sections.remove(Section{
 			segment: nil,
 			stream:  stream,
 			begin:   stream.begin,
 			end:     stream.end,
 		})
-		if _, ok := sections.begin(); ok == false {
+		if sections.empty() {
 			table.removeEmptySections(stream.streamID)
 		}
 	} else {
@@ -131,8 +130,8 @@ func (table *sectionsTable) remove(stream *stream) {
 	}
 }
 
-func (table *sectionsTable) reader(streamID int64) (*reader, error) {
-	sections := table.get(streamID)
+func (table *sectionsTable) Reader(streamID int64) (*reader, error) {
+	sections := table.Get(streamID)
 	if sections == nil {
 		return nil, errors.Wrapf(ErrNoFindStream, "stream[%d]", streamID)
 	}

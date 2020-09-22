@@ -41,7 +41,7 @@ func (updater *sectionsTableUpdater) updateLoop() {
 		for _, item := range items {
 			update := item.(updateSectionTable)
 			for _, stream := range update.mStreams {
-				updater.sectionsTable.update(stream)
+				updater.sectionsTable.UpdateSectionWithStream(stream)
 			}
 			if update.callbacks != nil {
 				if err := updater.callbackQueue.PushMany(update.callbacks); err != nil {

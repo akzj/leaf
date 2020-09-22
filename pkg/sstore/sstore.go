@@ -139,7 +139,7 @@ func (store *Store) AppendEntryWithCb(entry *pb.Entry, cb func(offset int64, err
 
 //Reader create Reader of the stream
 func (store *Store) Reader(streamID int64) (io.ReadSeeker, error) {
-	return store.sectionsTable.reader(streamID)
+	return store.sectionsTable.Reader(streamID)
 }
 
 //Watcher create Watcher of the stream
@@ -156,7 +156,7 @@ func (store *Store) End(streamID int64) (int64, bool) {
 //base return the begin of stream.
 //return 0,false when the stream no exist
 func (store *Store) Begin(streamID int64) (int64, bool) {
-	sections := store.sectionsTable.get(streamID)
+	sections := store.sectionsTable.Get(streamID)
 	if sections == nil {
 		return 0, false
 	}
@@ -230,7 +230,7 @@ func (store *Store) appendSegment(filename string, segment *segment) {
 	defer store.segmentsLocker.Unlock()
 	segment.IncRef()
 	store.segments[filepath.Base(filename)] = segment
-	if err := store.sectionsTable.update1(segment); err != nil {
+	if err := store.sectionsTable.UpdateSectionWithSegment(segment); err != nil {
 		log.Fatalf("%+v", err)
 	}
 }
@@ -267,10 +267,10 @@ func (store *Store) flushCallback(filename string) error {
 	store.immutableMStreamMapsLocker.Unlock()
 
 	store.appendSegment(nextSegment, segment)
-	//remove from sectionsTable
+	//RemoveSectionWithStream from sectionsTable
 	if remove != nil {
 		for _, mStream := range remove.streams {
-			store.sectionsTable.remove(mStream)
+			store.sectionsTable.RemoveSectionWithStream(mStream)
 		}
 	}
 	if err := store.clearJournal(); err != nil {
@@ -292,7 +292,7 @@ func (store *Store) deleteSegment(filename string) error {
 		return ErrNoFindSegment
 	}
 	delete(store.segments, filename)
-	if err := store.sectionsTable.remove1(segment); err != nil {
+	if err := store.sectionsTable.removeSectionWithSegment(segment); err != nil {
 		return err
 	}
 	segment.DecRef()
@@ -335,7 +335,6 @@ func (store *Store) commitSegmentFile(filename string) error {
 		}
 	}
 
-	//update end map
 	for streamID, info := range segment.meta.OffSetInfos {
 		store.endMap.set(streamID, info.End, segment.meta.To)
 	}
@@ -344,7 +343,6 @@ func (store *Store) commitSegmentFile(filename string) error {
 	store.committer.streamTable = newStreamTable(store.endMap,
 		store.options.BlockSize, len(segment.meta.OffSetInfos))
 
-	//update version
 	store.version = segment.meta.To
 
 	if err := store.flushCallback(filename); err != nil {

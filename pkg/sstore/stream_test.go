@@ -86,7 +86,7 @@ func TestStream(t *testing.T) {
 		assert.Equal(t, bytes.Compare(reader.Bytes(), buffer.Bytes()), 0)
 	})
 
-	t.Run("reader", func(t *testing.T) {
+	t.Run("Reader", func(t *testing.T) {
 
 		_, err := stream.ReadAt(nil, 1)
 		assert.Error(t, err)

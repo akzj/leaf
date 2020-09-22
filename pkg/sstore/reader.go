@@ -60,12 +60,12 @@ func (r *reader) Read(p []byte) (int, error) {
 	buf := p
 	var size int
 	for len(buf) > 0 {
-		item, err := r.index.find(r.offset)
+		section, last, err := r.index.find(r.offset)
 		if err != nil {
 			return 0, err
 		}
-		if item.stream != nil {
-			n, err := item.stream.ReadAt(buf, r.offset)
+		if section.stream != nil {
+			n, err := section.stream.ReadAt(buf, r.offset)
 			if err != nil {
 				if err == io.EOF {
 					if size == 0 {
@@ -78,12 +78,20 @@ func (r *reader) Read(p []byte) (int, error) {
 			buf = buf[n:]
 			size += n
 			r.offset += int64(n)
-		} else if item.segment != nil {
-			if item.segment.IncRef() < 0 {
+		} else if section.segment != nil {
+			if section.segment.IncRef() < 0 {
 				return size, errors.WithStack(ErrOffset)
 			}
-			n, err := item.segment.Reader(r.streamID).ReadAt(buf, r.offset)
-			item.segment.DecRef()
+			//reach end of the stream
+			if last && section.end == r.offset {
+				section.segment.DecRef()
+				if size == 0 {
+					return 0, io.EOF
+				}
+				return size, nil
+			}
+			n, err := section.segment.Reader(r.streamID).ReadAt(buf, r.offset)
+			section.segment.DecRef()
 			if err != nil {
 				if err == io.EOF {
 					if size == 0 {
