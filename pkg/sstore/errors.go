@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	ErrOffset          = errors.New("offset error")
+	ErrOffset          = errors.New("sectionOffset error")
 	ErrNoFindStream    = errors.New("no find stream")
 	ErrNoFindIndexInfo = errors.New("no find index info")
 	ErrNoFindSection   = errors.New("no find section")

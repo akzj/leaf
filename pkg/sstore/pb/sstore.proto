@@ -29,7 +29,7 @@ message Entry{
 }
 
 
-message OffsetInfo  {
+message SectionOffset  {
   int64 streamID = 1;
   int64 begin = 2;
   int64 offset = 3;
@@ -42,7 +42,7 @@ message SegmentMeta {
   Version From = 1;
   Version To = 2;
   int64 CreateTS = 3;
-  map<int64, OffsetInfo> OffSetInfos = 4;
+  map<int64, SectionOffset> section_offsets = 4;
 }
 
 

@@ -63,7 +63,7 @@ func (table *sectionsTable) loadOrCreate(streamID int64, section Section) (*Sect
 }
 
 func (table *sectionsTable) UpdateSectionWithSegment(segment *segment) error {
-	for _, it := range segment.meta.OffSetInfos {
+	for _, it := range segment.meta.SectionOffsets {
 		segment.IncRef()
 		section := Section{
 			segment: segment,
@@ -81,7 +81,7 @@ func (table *sectionsTable) UpdateSectionWithSegment(segment *segment) error {
 }
 
 func (table *sectionsTable) removeSectionWithSegment(segment *segment) error {
-	for _, info := range segment.meta.OffSetInfos {
+	for _, info := range segment.meta.SectionOffsets {
 		if sections := table.Get(info.StreamID); sections != nil {
 			sections.remove(Section{
 				segment: segment,

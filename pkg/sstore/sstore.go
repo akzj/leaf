@@ -335,21 +335,21 @@ func (store *Store) commitSegmentFile(filename string) error {
 		}
 	}
 
-	for streamID, info := range segment.meta.OffSetInfos {
+	for streamID, info := range segment.meta.SectionOffsets{
 		store.endMap.set(streamID, info.End, segment.meta.To)
 	}
 
 	//clear memory sectionsMap
 	store.committer.streamTable = newStreamTable(store.endMap,
-		store.options.BlockSize, len(segment.meta.OffSetInfos))
+		store.options.BlockSize, len(segment.meta.SectionOffsets))
 
 	store.version = segment.meta.To
 
 	if err := store.flushCallback(filename); err != nil {
 		return err
 	}
-	var notifies = make([]interface{}, 0, len(segment.meta.OffSetInfos))
-	for streamID, info := range segment.meta.OffSetInfos {
+	var notifies = make([]interface{}, 0, len(segment.meta.SectionOffsets))
+	for streamID, info := range segment.meta.SectionOffsets {
 		var item notify
 		item.streamID = streamID
 		item.end = info.End

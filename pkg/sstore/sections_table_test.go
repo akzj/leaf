@@ -118,7 +118,7 @@ func TestSectionsTable(t *testing.T) {
 	t.Run("update_section_with_segment", func(t *testing.T) {
 		for i := 0; i < streamCount; i++ {
 			for _, segment := range segments {
-				_, ok := segment.meta.OffSetInfos[int64(i)]
+				_, ok := segment.meta.SectionOffsets[int64(i)]
 				assert.True(t, ok)
 			}
 		}

@@ -43,7 +43,7 @@ func newSegment() *segment {
 			From:        &pb.Version{},
 			To:          &pb.Version{},
 			CreateTS:    0,
-			OffSetInfos: map[int64]*pb.OffsetInfo{},
+			SectionOffsets: map[int64]*pb.SectionOffset{},
 		},
 		l:      new(sync.RWMutex),
 		delete: false,
@@ -101,8 +101,8 @@ func (s *segment) FromVersion() *pb.Version {
 	return s.meta.From
 }
 
-func (s *segment) offsetInfo(streamID int64) (*pb.OffsetInfo, error) {
-	indexInfo, ok := s.meta.OffSetInfos[streamID]
+func (s *segment) offsetInfo(streamID int64) (*pb.SectionOffset, error) {
+	indexInfo, ok := s.meta.SectionOffsets[streamID]
 	if ok == false {
 		return indexInfo, ErrNoFindIndexInfo
 	}
@@ -110,13 +110,13 @@ func (s *segment) offsetInfo(streamID int64) (*pb.OffsetInfo, error) {
 }
 
 func (s *segment) Reader(streamID int64) *segmentReader {
-	info, ok := s.meta.OffSetInfos[streamID]
+	info, ok := s.meta.SectionOffsets[streamID]
 	if !ok {
 		return nil
 	}
 	return &segmentReader{
-		indexInfo: info,
-		r:         io.NewSectionReader(s.f, info.Offset, info.End-info.Begin),
+		sectionOffset: info,
+		r:             io.NewSectionReader(s.f, info.Offset, info.End-info.Begin),
 	}
 }
 
@@ -165,7 +165,7 @@ func flushStreamTable(filename string, table *streamTable) error {
 		if err != nil {
 			return err
 		}
-		seg.meta.OffSetInfos[streamID] = &pb.OffsetInfo{
+		seg.meta.SectionOffsets[streamID] = &pb.SectionOffset{
 			StreamID: streamID,
 			Offset:   Offset,
 			CRC:      hash.Sum32(),

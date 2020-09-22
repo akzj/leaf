@@ -46,7 +46,7 @@ func (m *stream) ReadAt(p []byte, off int64) (n int, err error) {
 	defer m.locker.RUnlock()
 	if off < m.begin || off > m.end {
 		return 0, errors.Wrapf(ErrOffset,
-			"offset[%d] begin[%d] end[%d]", off, m.begin, m.end)
+			"sectionOffset[%d] begin[%d] end[%d]", off, m.begin, m.end)
 	}
 	if off == m.end {
 		return 0, io.EOF
@@ -77,7 +77,7 @@ func (m *stream) WriteAt(p []byte, offset int64, ) (int, error) {
 	m.locker.Lock()
 	defer m.locker.Unlock()
 	if offset != -1 && m.end != offset {
-		return 0, fmt.Errorf("offset error")
+		return 0, fmt.Errorf("sectionOffset error")
 	}
 	var size = len(p)
 	for len(p) > 0 {

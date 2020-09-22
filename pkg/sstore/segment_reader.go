@@ -21,28 +21,28 @@ import (
 )
 
 type segmentReader struct {
-	indexInfo *pb.OffsetInfo
-	r         *io.SectionReader
+	sectionOffset *pb.SectionOffset
+	r             *io.SectionReader
 }
 
 func (s *segmentReader) Seek(offset int64, whence int) (int64, error) {
-	if offset < s.indexInfo.Begin || offset >= s.indexInfo.End {
+	if offset < s.sectionOffset.Begin || offset >= s.sectionOffset.End {
 		return 0, ErrOffset
 	}
-	offset = offset - s.indexInfo.Begin
+	offset = offset - s.sectionOffset.Begin
 	return s.r.Seek(offset, whence)
 }
 
 func (s *segmentReader) ReadAt(p []byte, offset int64) (n int, err error) {
-	if offset < s.indexInfo.Begin || offset >= s.indexInfo.End {
-		return 0, errors.Wrapf(ErrOffset,
-			fmt.Sprintf("offset[%d] begin[%d] end[%d]", offset, s.indexInfo.Begin, s.indexInfo.End))
+	if offset < s.sectionOffset.Begin || offset >= s.sectionOffset.End {
+		return 0, errors.Wrapf(ErrOffset, fmt.Sprintf("offset %d sectionOffset[%d,%d)",
+			offset, s.sectionOffset.Begin, s.sectionOffset.End))
 	}
-	size := s.indexInfo.End - offset
+	size := s.sectionOffset.End - offset
 	if int64(len(p)) > size {
 		p = p[:size]
 	}
-	offset = offset - s.indexInfo.Begin
+	offset = offset - s.sectionOffset.Begin
 	n, err = s.r.ReadAt(p, offset)
 	if err == io.EOF {
 		if n != 0 {

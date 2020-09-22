@@ -96,7 +96,7 @@ func (store *Store) init() error {
 		if err != nil {
 			return err
 		}
-		for _, info := range segment.meta.OffSetInfos {
+		for _, info := range segment.meta.SectionOffsets {
 			store.endMap.set(info.StreamID, info.End, segment.meta.To)
 		}
 		if store.version == nil {

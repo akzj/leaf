@@ -52,7 +52,7 @@ type jIndex struct {
 }
 
 func (JI *jIndex) String() string {
-	return fmt.Sprintf("index:%d,offset:%d", JI.Index, JI.Offset)
+	return fmt.Sprintf("index:%d,sectionOffset:%d", JI.Index, JI.Offset)
 }
 
 type journalIndex struct {
