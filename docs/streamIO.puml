@@ -1,0 +1,24 @@
+@startuml
+
+[mqtt_client]
+
+package "mqtt-broker" {
+    [mqtt_client]..>[mqtt_session] : mqtt
+    [mqtt_session]->[streamIO_client]
+}
+
+database meta-server-leader{
+    [grpc_service].> [mmdb]:call
+}
+cloud {
+    package "stream-server-master" {
+        [grpc_service1] .> [stream_store] : call
+        [heartbeat]-> [grpc_service]:rpc
+    }
+}
+
+[streamIO_client]-->[grpc_service1]:grpc/stream
+[streamIO_client]-->[grpc_service]:rpc
+
+
+@enduml
