@@ -219,27 +219,7 @@ func (store *Store) init() error {
 	return nil
 }
 
-type callbackWorker struct {
-	queue *block_queue.QueueWithContext
-}
 
-func newCallbackWorker(queue *block_queue.QueueWithContext) *callbackWorker {
-	return &callbackWorker{queue: queue}
-}
-
-func (worker *callbackWorker) callbackLoop() {
-	for {
-		items, err := worker.queue.PopAll(nil)
-		if err != nil {
-			log.Warn(err)
-			return
-		}
-		for _, item := range items {
-			request := item.(*WriteEntry)
-			request.cb(request.end, request.err)
-		}
-	}
-}
 
 func listDir(dir string, ext string) ([]string, error) {
 	var files []string
