@@ -39,7 +39,7 @@ func (store *Store) gogo(f func()) {
 	}()
 }
 
-//init segment,journal,index
+//init segment,journal,sections
 func (store *Store) init() error {
 	for _, dir := range []string{
 		store.options.JournalDir,
@@ -66,18 +66,18 @@ func (store *Store) init() error {
 	store.streamWatcher = newStreamWatcher(notifyQueue)
 	store.entryQueue = journalQueue
 
-	store.indexTableUpdater = &indexTableUpdater{
+	store.sectionsTableUpdater = &sectionsTableUpdater{
 		callbackQueue: callbackQueue,
 		notifyQueue:   notifyQueue,
 		queue:         block_queue.NewQueueWithContext(store.ctx, 128),
-		indexTable:    store.indexTable,
+		sectionsTable: store.sectionsTable,
 	}
 	store.callbackWorker = newCallbackWorker(callbackQueue)
 
 	store.committer = newCommitter(store,
 		commitQueue,
 		flushSegmentQueue,
-		store.indexTableUpdater.queue)
+		store.sectionsTableUpdater.queue)
 	store.syncer = newSyncer(store)
 	store.flusher = newSegmentFlusher(store.options.SegmentDir, flushSegmentQueue)
 
@@ -86,7 +86,7 @@ func (store *Store) init() error {
 	store.gogo(store.committer.processLoop)
 	store.gogo(store.streamWatcher.notifyLoop)
 	store.gogo(store.syncer.pushEntryLoop)
-	store.gogo(store.indexTableUpdater.updateLoop)
+	store.gogo(store.sectionsTableUpdater.updateLoop)
 
 	//rebuild segment index
 	segmentFiles := manifest.GetSegmentFiles()

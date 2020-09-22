@@ -69,12 +69,12 @@ func TestSortSearch(t *testing.T) {
 	}
 }
 
-func TestOffsetIndex(t *testing.T) {
+func TestSections(t *testing.T) {
 
 	var streamID int64 = 1
-	var index *offsetIndex
-	t.Run("newOffsetIndex", func(t *testing.T) {
-		index = newOffsetIndex(streamID, offsetItem{
+	var sections *Sections
+	t.Run("newSection", func(t *testing.T) {
+		sections = newSection(streamID, Section{
 			segment: &segment{},
 			stream: &stream{
 				streamID: streamID,
@@ -84,7 +84,7 @@ func TestOffsetIndex(t *testing.T) {
 			begin: 1,
 			end:   10,
 		})
-		assert.NotNil(t, index)
+		assert.NotNil(t, sections)
 	})
 
 	var offsets = []struct {
@@ -94,7 +94,7 @@ func TestOffsetIndex(t *testing.T) {
 
 	t.Run("insertOrUpdate_segment", func(t *testing.T) {
 		for _, offset := range offsets {
-			assert.NoError(t, index.insertOrUpdate(offsetItem{
+			assert.NoError(t, sections.insertOrUpdate(Section{
 				segment: &segment{},
 				begin:   offset.begin,
 				end:     offset.end,
@@ -103,19 +103,19 @@ func TestOffsetIndex(t *testing.T) {
 	})
 
 	t.Run("begin", func(t *testing.T) {
-		begin, ok := index.begin()
+		begin, ok := sections.begin()
 		assert.True(t, ok)
 		assert.Equal(t, begin, int64(1))
 	})
 
-	t.Run("getItems", func(t *testing.T) {
-		items := index.getItems()
+	t.Run("getSections", func(t *testing.T) {
+		items := sections.getSections()
 		assert.Equal(t, len(items), 5)
 	})
 
 	t.Run("find_segment", func(t *testing.T) {
 		for i := int64(1); i <= offsets[len(offsets)-1].end; i++ {
-			item, err := index.find(i)
+			item, err := sections.find(i)
 			assert.NoError(t, err)
 			assert.NotNil(t, item.segment)
 			assert.True(t, item.begin <= i && i <= item.end, fmt.Sprintf("%d %d %d", item.begin, i, item.end))
@@ -124,7 +124,7 @@ func TestOffsetIndex(t *testing.T) {
 
 	t.Run("insertOrUpdate_mStream", func(t *testing.T) {
 		for _, offset := range offsets {
-			assert.NoError(t, index.insertOrUpdate(offsetItem{
+			assert.NoError(t, sections.insertOrUpdate(Section{
 				stream: &stream{
 					streamID: streamID,
 					begin:    offset.begin,
@@ -138,7 +138,7 @@ func TestOffsetIndex(t *testing.T) {
 
 	t.Run("find_m_stream", func(t *testing.T) {
 		for i := int64(1); i <= offsets[len(offsets)-1].end; i++ {
-			item, err := index.find(i)
+			item, err := sections.find(i)
 			assert.NoError(t, err)
 			assert.NotNil(t, item.segment)
 			assert.NotNil(t, item.stream)
@@ -148,22 +148,22 @@ func TestOffsetIndex(t *testing.T) {
 
 	t.Run("remove_segment", func(t *testing.T) {
 		for _, offset := range offsets {
-			index.remove(offsetItem{
+			sections.remove(Section{
 				segment: &segment{},
 				stream:  nil,
 				begin:   offset.begin,
 				end:     offset.end,
 			})
-			item, err := index.find(offset.begin)
+			item, err := sections.find(offset.begin)
 			assert.NoError(t, err)
 			assert.NotNil(t, item.stream)
 			assert.Nil(t, item.segment)
 		}
 	})
 
-	t.Run("", func(t *testing.T) {
+	t.Run("find", func(t *testing.T) {
 		for _, offset := range offsets {
-			index.remove(offsetItem{
+			sections.remove(Section{
 				stream: &stream{
 					begin: offset.begin,
 					end:   offset.end,
@@ -171,7 +171,7 @@ func TestOffsetIndex(t *testing.T) {
 				begin: offset.begin,
 				end:   offset.end,
 			})
-			item, err := index.find(offset.begin)
+			item, err := sections.find(offset.begin)
 			if err != nil {
 				assert.NotEqual(t, item.begin, offset.begin)
 			}

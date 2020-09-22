@@ -87,7 +87,7 @@ func (c *committer) processLoop() {
 				end:      request.end,
 			})
 		}
-		update := updateIndexTable{
+		update := updateSectionTable{
 			notifies:  notifies,
 			callbacks: items,
 		}

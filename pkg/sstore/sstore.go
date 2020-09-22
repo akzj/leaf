@@ -34,17 +34,17 @@ type Store struct {
 	entryQueue *block_queue.QueueWithContext
 	isClose    int32
 
-	version           *pb.Version
-	endMap            *int64LockMap
-	committer         *committer
-	indexTable        *indexTable
-	streamWatcher     *streamWatcher
-	journalWriter     *journalWriter
-	manifest          *Manifest
-	syncer            *Syncer
-	flusher           *segmentFlusher
-	indexTableUpdater *indexTableUpdater
-	callbackWorker    *callbackWorker
+	version              *pb.Version
+	endMap               *int64LockMap
+	committer            *committer
+	sectionsTable        *sectionsTable
+	streamWatcher        *streamWatcher
+	journalWriter        *journalWriter
+	manifest             *Manifest
+	syncer               *Syncer
+	flusher              *segmentFlusher
+	sectionsTableUpdater *sectionsTableUpdater
+	callbackWorker       *callbackWorker
 
 	immutableMStreamMapsLocker sync.Mutex
 	immutableMStreamMaps       []*streamTable
@@ -78,13 +78,13 @@ func Open(options Options) (*Store, error) {
 		version:                    nil,
 		endMap:                     newInt64LockMap(),
 		committer:                  nil,
-		indexTable:                 newIndexTable(),
+		sectionsTable:              newSectionsTable(),
 		streamWatcher:              nil,
 		journalWriter:              nil,
 		manifest:                   nil,
 		syncer:                     nil,
 		flusher:                    nil,
-		indexTableUpdater:          nil,
+		sectionsTableUpdater:       nil,
 		callbackWorker:             nil,
 		immutableMStreamMapsLocker: sync.Mutex{},
 		immutableMStreamMaps:       nil,
@@ -139,7 +139,7 @@ func (store *Store) AppendEntryWithCb(entry *pb.Entry, cb func(offset int64, err
 
 //Reader create Reader of the stream
 func (store *Store) Reader(streamID int64) (io.ReadSeeker, error) {
-	return store.indexTable.reader(streamID)
+	return store.sectionsTable.reader(streamID)
 }
 
 //Watcher create Watcher of the stream
@@ -156,11 +156,11 @@ func (store *Store) End(streamID int64) (int64, bool) {
 //base return the begin of stream.
 //return 0,false when the stream no exist
 func (store *Store) Begin(streamID int64) (int64, bool) {
-	offsetIndex := store.indexTable.get(streamID)
-	if offsetIndex == nil {
+	sections := store.sectionsTable.get(streamID)
+	if sections == nil {
 		return 0, false
 	}
-	return offsetIndex.begin()
+	return sections.begin()
 }
 
 //Exist
@@ -230,7 +230,7 @@ func (store *Store) appendSegment(filename string, segment *segment) {
 	defer store.segmentsLocker.Unlock()
 	segment.IncRef()
 	store.segments[filepath.Base(filename)] = segment
-	if err := store.indexTable.update1(segment); err != nil {
+	if err := store.sectionsTable.update1(segment); err != nil {
 		log.Fatalf("%+v", err)
 	}
 }
@@ -267,10 +267,10 @@ func (store *Store) flushCallback(filename string) error {
 	store.immutableMStreamMapsLocker.Unlock()
 
 	store.appendSegment(nextSegment, segment)
-	//remove from indexTable
+	//remove from sectionsTable
 	if remove != nil {
 		for _, mStream := range remove.streams {
-			store.indexTable.remove(mStream)
+			store.sectionsTable.remove(mStream)
 		}
 	}
 	if err := store.clearJournal(); err != nil {
@@ -292,7 +292,7 @@ func (store *Store) deleteSegment(filename string) error {
 		return ErrNoFindSegment
 	}
 	delete(store.segments, filename)
-	if err := store.indexTable.remove1(segment); err != nil {
+	if err := store.sectionsTable.remove1(segment); err != nil {
 		return err
 	}
 	segment.DecRef()
@@ -340,7 +340,7 @@ func (store *Store) commitSegmentFile(filename string) error {
 		store.endMap.set(streamID, info.End, segment.meta.To)
 	}
 
-	//clear memory table
+	//clear memory sectionsMap
 	store.committer.streamTable = newStreamTable(store.endMap,
 		store.options.BlockSize, len(segment.meta.OffSetInfos))
 

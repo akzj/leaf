@@ -158,7 +158,7 @@ func TestReader(t *testing.T) {
 		t.Fatal(ok)
 	}
 
-	/*for _, it := range store.indexTable.get(streamID).items {
+	/*for _, it := range store.sectionsTable.get(streamID).sections {
 		if it.stream != nil {
 			fmt.Printf("stream [%d-%d) \n", it.stream.begin, it.stream.end)
 		} else
@@ -168,7 +168,7 @@ func TestReader(t *testing.T) {
 		}
 	}*/
 
-	info, err := sstore.indexTable.get(streamID).find(521)
+	info, err := sstore.sectionsTable.get(streamID).find(521)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}

@@ -21,11 +21,11 @@ import (
 type reader struct {
 	offset   int64
 	streamID int64
-	index    *offsetIndex
+	index    *Sections
 	endMap   *int64LockMap
 }
 
-func newReader(streamID int64, index *offsetIndex, endMap *int64LockMap) *reader {
+func newReader(streamID int64, index *Sections, endMap *int64LockMap) *reader {
 	return &reader{
 		offset:   0,
 		streamID: streamID,
