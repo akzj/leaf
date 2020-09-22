@@ -58,15 +58,15 @@ func (jWriter *journalWriter) JournalFilename() string {
 }
 
 func (jWriter *journalWriter) createNewJournal() error {
-	index, err := jWriter.manifest.NextJournal()
+	filename, err := jWriter.manifest.NextJournal()
 	if err != nil {
 		return err
 	}
-	journal, err := OpenJournal(index)
+	journal, err := OpenJournal(filename)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	if err := jWriter.manifest.AppendJournal(&pb.AppendJournal{Filename: index}); err != nil {
+	if err := jWriter.manifest.AppendJournal(&pb.AppendJournal{Filename: filename}); err != nil {
 		return err
 	}
 	header := jWriter.journal.GetMeta()

@@ -74,14 +74,14 @@ message DelJournalMeta  {
   string  Filename = 1;
 }
 
-message FileIndex {
-  int64  segment_index = 5;
-  int64  journal_index = 6;
-  int64  manifest_index = 7;
+message FileID {
+  int64  segmentID = 5;
+  int64  journalID = 6;
+  int64  manifestID = 7;
 }
 message ManifestSnapshot{
-  FileIndex file_index = 5;
-  Version      version = 1;
+  FileID fileID = 5;
+  Version version = 1;
   repeated string segments = 2;
   repeated  string journals = 3;
   map<string, JournalMeta> journal_metas = 4;

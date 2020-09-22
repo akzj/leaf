@@ -317,11 +317,11 @@ func (store *Store) commitSegmentFile(filename string) error {
 	var segmentFiles = store.manifest.GetSegmentFiles()
 	if len(segmentFiles) != 0 {
 		sort.Strings(segmentFiles)
-		lastSegmentIndex, err := parseFileIndex(segmentFiles[len(segmentFiles)-1])
+		lastSegmentIndex, err := parseFileID(segmentFiles[len(segmentFiles)-1])
 		if err != nil {
 			panic(err)
 		}
-		segmentIndex, err := parseFileIndex(filename)
+		segmentIndex, err := parseFileID(filename)
 		if lastSegmentIndex != segmentIndex-1 {
 			for _, segmentFile := range segmentFiles {
 				if segment := store.getSegment(segmentFile); segment != nil {
@@ -362,11 +362,11 @@ func (store *Store) commitSegmentFile(filename string) error {
 }
 
 func (store *Store) CreateSegmentWriter(filename string) (*SegmentWriter, error) {
-	segmentIndex, err := strconv.ParseInt(strings.Split(filename, ".")[0], 10, 64)
+	segmentID, err := strconv.ParseInt(strings.Split(filename, ".")[0], 10, 64)
 	if err != nil {
 		return nil, err
 	}
-	if err := store.manifest.SetSegmentIndex(segmentIndex); err != nil {
+	if err := store.manifest.SetSegmentID(segmentID); err != nil {
 		return nil, err
 	}
 	filename = filepath.Join(store.options.SegmentDir, filename)

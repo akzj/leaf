@@ -28,7 +28,7 @@ import (
 
 type Manifest struct {
 	*pb.ManifestSnapshot
-	l                   sync.RWMutex
+	locker              sync.RWMutex
 	maxJournalSize      int64
 	journal             *journal
 	segmentDir          string
@@ -48,7 +48,7 @@ const (
 	setJournalMetaType
 	delJournalMetaType
 	manifestSnapshotType
-	FilesIndexType
+	FilesIDType
 
 	segmentExt            = ".seg"
 	manifestExt           = ".log"
@@ -58,7 +58,7 @@ const (
 
 func OpenManifest(manifestDir string, segmentDir string, journalDir string) (*Manifest, error) {
 	manifest := &Manifest{
-		l:              sync.RWMutex{},
+		locker:         sync.RWMutex{},
 		maxJournalSize: 128 * MB,
 		journal:        nil,
 		segmentDir:     segmentDir,
@@ -66,7 +66,7 @@ func OpenManifest(manifestDir string, segmentDir string, journalDir string) (*Ma
 		journalDir:     journalDir,
 		inRecovery:     false,
 		ManifestSnapshot: &pb.ManifestSnapshot{
-			FileIndex:    &pb.FileIndex{},
+			FileID:       &pb.FileID{},
 			Version:      &pb.Version{},
 			Segments:     nil,
 			Journals:     nil,
@@ -76,14 +76,14 @@ func OpenManifest(manifestDir string, segmentDir string, journalDir string) (*Ma
 		c:                   make(chan interface{}, 1),
 		s:                   make(chan interface{}, 1),
 	}
-	if err := manifest.reload(); err != nil {
+	if err := manifest.init(); err != nil {
 		return nil, err
 	}
 	go manifest.start()
 	return manifest, nil
 }
 
-func (m *Manifest) reload() error {
+func (m *Manifest) init() error {
 	m.inRecovery = true
 	defer func() {
 		m.inRecovery = false
@@ -118,17 +118,17 @@ func (m *Manifest) reload() error {
 		m.Version = entry.Ver
 		switch entry.StreamID {
 		case appendSegmentType:
-			var appendS pb.AppendSegment
-			if err := proto.Unmarshal(entry.Data, &appendS); err != nil {
+			var message pb.AppendSegment
+			if err := proto.Unmarshal(entry.Data, &message); err != nil {
 				return errors.WithStack(err)
 			}
-			return m.AppendSegment(&appendS)
+			return m.AppendSegment(&message)
 		case deleteSegmentType:
-			var deleteS pb.DeleteSegment
-			if err := proto.Unmarshal(entry.Data, &deleteS); err != nil {
+			var message pb.DeleteSegment
+			if err := proto.Unmarshal(entry.Data, &message); err != nil {
 				return errors.WithStack(err)
 			}
-			return m.DeleteSegment(&deleteS)
+			return m.DeleteSegment(&message)
 		case appendJournalType:
 			var message pb.AppendJournal
 			if err := proto.Unmarshal(entry.Data, &message); err != nil {
@@ -146,17 +146,17 @@ func (m *Manifest) reload() error {
 				return errors.WithStack(err)
 			}
 		case setJournalMetaType:
-			var header pb.JournalMeta
-			if err := proto.Unmarshal(entry.Data, &header); err != nil {
+			var message pb.JournalMeta
+			if err := proto.Unmarshal(entry.Data, &message); err != nil {
 				return errors.WithStack(err)
 			}
-			return m.SetJournalMeta(&header)
-		case FilesIndexType:
-			var fileIndex pb.FileIndex
-			if err := proto.Unmarshal(entry.Data, &fileIndex); err != nil {
+			return m.SetJournalMeta(&message)
+		case FilesIDType:
+			var message pb.FileID
+			if err := proto.Unmarshal(entry.Data, &message); err != nil {
 				return errors.WithStack(err)
 			}
-			m.FileIndex = &fileIndex
+			m.FileID = &message
 		case delJournalMetaType:
 			var message pb.DelJournalMeta
 			if err := proto.Unmarshal(entry.Data, &message); err != nil {
@@ -175,14 +175,14 @@ func (m *Manifest) reload() error {
 }
 
 func (m *Manifest) compactionLog() error {
-	m.l.Lock()
-	defer m.l.Unlock()
+	m.locker.Lock()
+	defer m.locker.Unlock()
 	if m.journal.Size() < m.maxJournalSize {
 		return nil
 	}
-	m.FileIndex.SegmentIndex++
+	m.FileID.SegmentID++
 	m.Version.Index++
-	tmpJournal := strconv.FormatInt(m.FileIndex.SegmentIndex, 10) + manifestJournalExtTmp
+	tmpJournal := strconv.FormatInt(m.FileID.SegmentID, 10) + manifestJournalExtTmp
 	tmpJournal = filepath.Join(m.manifestDir, tmpJournal)
 	journal, err := OpenJournal(tmpJournal)
 	if err != nil {
@@ -225,51 +225,51 @@ func CopyStrings(strings []string) []string {
 }
 
 func (m *Manifest) GetSegmentFiles() []string {
-	m.l.RLock()
-	defer m.l.RUnlock()
+	m.locker.RLock()
+	defer m.locker.RUnlock()
 	segments := CopyStrings(m.Segments)
 	sortFilename(segments)
 	return segments
 }
 
 func (m *Manifest) GetJournalFiles() []string {
-	m.l.RLock()
-	defer m.l.RUnlock()
+	m.locker.RLock()
+	defer m.locker.RUnlock()
 	journals := CopyStrings(m.Journals)
 	sortFilename(journals)
 	return journals
 }
 
-func (m *Manifest) GetSegmentIndex() int64 {
-	m.l.Lock()
-	defer m.l.Unlock()
-	return m.FileIndex.SegmentIndex
+func (m *Manifest) GetSegmentID() int64 {
+	m.locker.Lock()
+	defer m.locker.Unlock()
+	return m.FileID.SegmentID
 }
 
-func (m *Manifest) SetSegmentIndex(segmentIndex int64) error {
-	m.l.Lock()
-	defer m.l.Unlock()
-	if m.FileIndex.SegmentIndex < segmentIndex {
-		m.FileIndex.SegmentIndex = segmentIndex
+func (m *Manifest) SetSegmentID(ID int64) error {
+	m.locker.Lock()
+	defer m.locker.Unlock()
+	if m.FileID.SegmentID < ID {
+		m.FileID.SegmentID = ID
 	} else {
-		return errors.New("error segment index")
+		return errors.New("error segment ID")
 	}
-	return m.writeFilesIndex()
+	return m.writeFilesID()
 }
 
 func (m *Manifest) GetNextSegment() (string, error) {
-	m.l.Lock()
-	defer m.l.Unlock()
-	m.FileIndex.SegmentIndex++
-	if err := m.writeFilesIndex(); err != nil {
+	m.locker.Lock()
+	defer m.locker.Unlock()
+	m.FileID.SegmentID++
+	if err := m.writeFilesID(); err != nil {
 		return "", err
 	}
-	return filepath.Join(m.segmentDir, strconv.FormatInt(m.FileIndex.SegmentIndex, 10)+segmentExt), nil
+	return filepath.Join(m.segmentDir, strconv.FormatInt(m.FileID.SegmentID, 10)+segmentExt), nil
 }
 
 func (m *Manifest) AppendJournal(appendJournal *pb.AppendJournal) error {
-	m.l.Lock()
-	defer m.l.Unlock()
+	m.locker.Lock()
+	defer m.locker.Unlock()
 	filename := filepath.Base(appendJournal.Filename)
 	for _, file := range m.Journals {
 		if file == filename {
@@ -285,13 +285,13 @@ func (m *Manifest) AppendJournal(appendJournal *pb.AppendJournal) error {
 }
 
 func (m *Manifest) DeleteJournal(deleteJournal *pb.DeleteJournal) error {
-	m.l.Lock()
-	defer m.l.Unlock()
+	m.locker.Lock()
+	defer m.locker.Unlock()
 	filename := filepath.Base(deleteJournal.Filename)
 	var find = false
-	for index, file := range m.Journals {
+	for ID, file := range m.Journals {
 		if file == filename {
-			copy(m.Journals[index:], m.Journals[index+1:])
+			copy(m.Journals[ID:], m.Journals[ID+1:])
 			m.Journals = m.Journals[:len(m.Journals)-1]
 			find = true
 			break
@@ -308,8 +308,8 @@ func (m *Manifest) DeleteJournal(deleteJournal *pb.DeleteJournal) error {
 }
 
 func (m *Manifest) AppendSegment(appendS *pb.AppendSegment) error {
-	m.l.Lock()
-	defer m.l.Unlock()
+	m.locker.Lock()
+	defer m.locker.Unlock()
 	filename := filepath.Base(appendS.Filename)
 	for _, file := range m.Segments {
 		if file == filename {
@@ -325,8 +325,8 @@ func (m *Manifest) AppendSegment(appendS *pb.AppendSegment) error {
 }
 
 func (m *Manifest) SetJournalMeta(header *pb.JournalMeta) error {
-	m.l.Lock()
-	defer m.l.Unlock()
+	m.locker.Lock()
+	defer m.locker.Unlock()
 	m.JournalMetas[filepath.Base(header.Filename)] = header
 	if m.inRecovery {
 		return nil
@@ -336,8 +336,8 @@ func (m *Manifest) SetJournalMeta(header *pb.JournalMeta) error {
 }
 
 func (m *Manifest) GetJournalMetas() []*pb.JournalMeta {
-	m.l.Lock()
-	defer m.l.Unlock()
+	m.locker.Lock()
+	defer m.locker.Unlock()
 	var journalMetas []*pb.JournalMeta
 	for _, journalMeta := range m.JournalMetas {
 		journalMetas = append(journalMetas, journalMeta)
@@ -346,8 +346,8 @@ func (m *Manifest) GetJournalMetas() []*pb.JournalMeta {
 }
 
 func (m *Manifest) GetJournalMeta(filename string) (*pb.JournalMeta, error) {
-	m.l.Lock()
-	defer m.l.Unlock()
+	m.locker.Lock()
+	defer m.locker.Unlock()
 	header, ok := m.JournalMetas[filename]
 	if !ok {
 		return header, errors.Errorf("no find meta [%s]", filename)
@@ -356,8 +356,8 @@ func (m *Manifest) GetJournalMeta(filename string) (*pb.JournalMeta, error) {
 }
 
 func (m *Manifest) DelJournalMeta(header *pb.DelJournalMeta) error {
-	m.l.Lock()
-	defer m.l.Unlock()
+	m.locker.Lock()
+	defer m.locker.Unlock()
 	_, ok := m.JournalMetas[filepath.Base(header.Filename)]
 	if ok == false {
 		return errors.Errorf("no find journal [%s]", header.Filename)
@@ -371,13 +371,13 @@ func (m *Manifest) DelJournalMeta(header *pb.DelJournalMeta) error {
 }
 
 func (m *Manifest) DeleteSegment(deleteS *pb.DeleteSegment) error {
-	m.l.Lock()
-	defer m.l.Unlock()
+	m.locker.Lock()
+	defer m.locker.Unlock()
 	filename := filepath.Base(deleteS.Filename)
 	var find = false
-	for index, file := range m.Segments {
+	for i, file := range m.Segments {
 		if file == filename {
-			copy(m.Segments[index:], m.Segments[index+1:])
+			copy(m.Segments[i:], m.Segments[i+1:])
 			m.Segments = m.Segments[:len(m.Segments)-1]
 			find = true
 			break
@@ -420,8 +420,8 @@ func (m *Manifest) tryCompactionLog() {
 }
 
 func (m *Manifest) Close() error {
-	m.l.Lock()
-	defer m.l.Unlock()
+	m.locker.Lock()
+	defer m.locker.Unlock()
 	if err := m.journal.Close(); err != nil {
 		return err
 	}
@@ -430,22 +430,22 @@ func (m *Manifest) Close() error {
 	return nil
 }
 
-func (m *Manifest) writeFilesIndex() error {
-	data, err := proto.Marshal(m.FileIndex)
+func (m *Manifest) writeFilesID() error {
+	data, err := proto.Marshal(m.FileID)
 	if err != nil {
 		panic(err)
 	}
-	return m.writeEntry(FilesIndexType, data)
+	return m.writeEntry(FilesIDType, data)
 }
 
 func (m *Manifest) NextJournal() (string, error) {
-	m.l.Lock()
-	defer m.l.Unlock()
-	m.FileIndex.JournalIndex++
-	if err := m.writeFilesIndex(); err != nil {
+	m.locker.Lock()
+	defer m.locker.Unlock()
+	m.FileID.JournalID++
+	if err := m.writeFilesID(); err != nil {
 		return "", err
 	}
-	return filepath.Join(m.journalDir, strconv.FormatInt(m.FileIndex.JournalIndex, 10)+manifestExt), nil
+	return filepath.Join(m.journalDir, strconv.FormatInt(m.FileID.JournalID, 10)+manifestExt), nil
 }
 
 func (m *Manifest) start() {
@@ -462,7 +462,7 @@ func (m *Manifest) start() {
 	}()
 }
 
-func parseFileIndex(filename string) (int64, error) {
+func parseFileID(filename string) (int64, error) {
 	filename = filepath.Base(filename)
 	token := strings.SplitN(filename, ".", 2)[0]
 	return strconv.ParseInt(token, 10, 64)
