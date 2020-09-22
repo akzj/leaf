@@ -375,12 +375,12 @@ func TestAsyncAppend(t *testing.T) {
 		lCount := count
 		for {
 			tCount := count
-			fmt.Println(int64(tCount - lCount)/5)
+			fmt.Println(int64(tCount-lCount) / 5)
 			lCount = tCount
-			time.Sleep(time.Second*5)
+			time.Sleep(time.Second * 5)
 		}
 	}()
-	for i := 0; i < 10000000; i++ {
+	for i := 0; i < 10; i++ {
 		for i2 := 0; i2 < 100000; i2++ {
 			wg.Add(1)
 			sstore.AsyncAppend(int64(i2), data, -1, func(offset int64, err error) {

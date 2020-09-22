@@ -15,12 +15,10 @@ package sstore
 
 import (
 	"github.com/akzj/streamIO/pkg/sstore/pb"
-	"sync"
 	"time"
 )
 
 type streamTable struct {
-	locker    sync.Mutex
 	size      int64
 	from      *pb.Version // first version
 	to        *pb.Version //last version, include
@@ -33,7 +31,6 @@ type streamTable struct {
 func newStreamTable(sizeMap *int64LockMap,
 	blockSize int, streamCount int) *streamTable {
 	return &streamTable{
-		locker:    sync.Mutex{},
 		size:      0,
 		from:      nil,
 		to:        nil,
@@ -45,16 +42,13 @@ func newStreamTable(sizeMap *int64LockMap,
 }
 
 func (m *streamTable) loadOrCreateStream(streamID int64) (*stream, bool) {
-	m.locker.Lock()
 	ms, ok := m.streams[streamID]
 	if ok {
-		m.locker.Unlock()
 		return ms, true
 	}
 	size, _ := m.endMap.get(streamID)
 	ms = newStream(size, m.blockSize, streamID)
 	m.streams[streamID] = ms
-	m.locker.Unlock()
 	return ms, false
 }
 
@@ -65,7 +59,9 @@ func (m *streamTable) appendEntry(entry *pb.Entry, end *int64) (*stream, error) 
 	if err != nil {
 		return nil, err
 	}
-	*end = ms.end
+	if end != nil {
+		*end = ms.end
+	}
 	m.endMap.set(entry.StreamID, ms.end, entry.Ver)
 	m.size += int64(n)
 	m.to = entry.Ver

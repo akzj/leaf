@@ -15,8 +15,10 @@ package sstore
 
 import (
 	"github.com/akzj/streamIO/pkg/block-queue"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"math"
+	"os"
 	"path/filepath"
 	"strconv"
 )
@@ -39,10 +41,16 @@ func newSegmentFlusher(dir string, queue *block_queue.QueueWithContext) *segment
 	}
 }
 
-func (flusher *segmentFlusher) flush(table *streamTable) (string, error) {
+func (flusher *segmentFlusher) flush(flushSegment flushSegment) (string, error) {
 	filename := filepath.Join(flusher.dir, strconv.FormatInt(math.MaxInt64, 10)+segmentExt)
-	if err := flushStreamTable(filename, table); err != nil {
+	if err := flushStreamTable(filename, flushSegment.streamTable); err != nil {
 		return "", err
+	}
+	if flushSegment.rename != "" {
+		if err := os.Rename(filename, flushSegment.rename); err != nil {
+			return "", errors.WithStack(err)
+		}
+		return flushSegment.rename, nil
 	}
 	return filename, nil
 }
@@ -55,6 +63,6 @@ func (flusher *segmentFlusher) flushLoop() {
 			return
 		}
 		flushSegment := item.(flushSegment)
-		flushSegment.callback(flusher.flush(flushSegment.streamTable))
+		flushSegment.callback(flusher.flush(flushSegment))
 	}
 }

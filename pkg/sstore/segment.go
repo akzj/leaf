@@ -109,7 +109,7 @@ func (s *segment) offsetInfo(streamID int64) (*pb.OffsetInfo, error) {
 	return indexInfo, nil
 }
 
-func (s *segment) Reader(streamID int64) io.ReaderAt {
+func (s *segment) Reader(streamID int64) *segmentReader {
 	info, ok := s.meta.OffSetInfos[streamID]
 	if !ok {
 		return nil
