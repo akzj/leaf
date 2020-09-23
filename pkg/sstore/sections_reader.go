@@ -18,23 +18,23 @@ import (
 	"io"
 )
 
-type reader struct {
+type sectionsReader struct {
 	offset   int64
 	streamID int64
-	index    *Sections
+	sections *Sections
 	endMap   *int64LockMap
 }
 
-func newReader(streamID int64, index *Sections, endMap *int64LockMap) *reader {
-	return &reader{
+func newSectionsReader(streamID int64, sections *Sections, endMap *int64LockMap) *sectionsReader {
+	return &sectionsReader{
 		offset:   0,
 		streamID: streamID,
-		index:    index,
+		sections: sections,
 		endMap:   endMap,
 	}
 }
 
-func (r *reader) Seek(offset int64, whence int) (int64, error) {
+func (r *sectionsReader) Seek(offset int64, whence int) (int64, error) {
 	switch whence {
 	default:
 		return 0, ErrWhence
@@ -48,7 +48,7 @@ func (r *reader) Seek(offset int64, whence int) (int64, error) {
 		}
 		offset += limit
 	}
-	begin, ok := r.index.begin()
+	begin, ok := r.sections.begin()
 	if ok && offset < begin {
 		return 0, ErrOffset
 	}
@@ -56,11 +56,11 @@ func (r *reader) Seek(offset int64, whence int) (int64, error) {
 	return offset, nil
 }
 
-func (r *reader) Read(p []byte) (int, error) {
+func (r *sectionsReader) Read(p []byte) (int, error) {
 	buf := p
 	var size int
 	for len(buf) > 0 {
-		section, last, err := r.index.find(r.offset)
+		section, last, err := r.sections.find(r.offset)
 		if err != nil {
 			return 0, err
 		}

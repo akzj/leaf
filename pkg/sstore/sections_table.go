@@ -130,10 +130,10 @@ func (table *sectionsTable) RemoveSectionWithStream(stream *stream) {
 	}
 }
 
-func (table *sectionsTable) Reader(streamID int64) (*reader, error) {
+func (table *sectionsTable) Reader(streamID int64) (*sectionsReader, error) {
 	sections := table.Get(streamID)
 	if sections == nil {
 		return nil, errors.Wrapf(ErrNoFindStream, "stream[%d]", streamID)
 	}
-	return newReader(streamID, sections, table.endMap), nil
+	return newSectionsReader(streamID, sections, table.endMap), nil
 }
