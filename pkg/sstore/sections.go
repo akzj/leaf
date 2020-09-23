@@ -34,8 +34,6 @@ type Sections struct {
 	sections []Section
 }
 
-var streamSectionNoFind = Section{}
-
 func newSection(streamID int64, section Section) *Sections {
 	return &Sections{
 		streamID: streamID,
@@ -49,20 +47,25 @@ func (sections *Sections) getSections() []Section {
 	return append(make([]Section, 0, len(sections.sections)), sections.sections...)
 }
 
-func (sections *Sections) find(offset int64) (Section, bool, error) {
+//Find find section with offset
+//return section if success
+func (sections *Sections) Find(offset int64) (Section, bool, error) {
 	sections.l.RLock()
 	defer sections.l.RUnlock()
 	if len(sections.sections) == 0 {
-		return streamSectionNoFind, false, errors.WithStack(ErrNoFindSection)
+		return Section{}, false, errors.WithStack(ErrNoFindSection)
 	}
 	if sections.sections[len(sections.sections)-1].end < offset {
-		return sections.sections[len(sections.sections)-1], false, nil
+		return sections.sections[len(sections.sections)-1], true, nil
 	}
 	i := sort.Search(len(sections.sections), func(i int) bool {
 		return offset < sections.sections[i].end
 	})
 	if i < len(sections.sections) {
-		return sections.sections[i], false, nil
+		if i < len(sections.sections)-1 {
+			return sections.sections[i], false, nil
+		}
+		return sections.sections[i], true, nil
 	}
 	return sections.sections[i-1], true, nil
 }

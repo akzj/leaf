@@ -214,7 +214,7 @@ func (syncer *Syncer) SyncRequest(ctx context.Context, serverID, index int64, f 
 		syncer.journalLocker.Lock()
 		for _, journalIter := range syncer.journals {
 			if index >= journalIter.meta.From.Index && index <= journalIter.GetFlushIndex() {
-				log.Debug("find", journalIter.meta, "flushIndex", journalIter.GetFlushIndex(), "index", index)
+				log.Debug("Find", journalIter.meta, "flushIndex", journalIter.GetFlushIndex(), "index", index)
 				journal = journalIter
 				journal.IncRef()
 				break

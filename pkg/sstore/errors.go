@@ -18,12 +18,11 @@ import (
 )
 
 var (
-	ErrOffset          = errors.New("sectionOffset error")
-	ErrNoFindStream    = errors.New("no find stream")
-	ErrNoFindIndexInfo = errors.New("no find index info")
-	ErrNoFindSection   = errors.New("no find section")
-	ErrNoFindSegment   = errors.New("no find segment")
+	ErrOffset          = errors.New("section offset error")
+	ErrNoFindStream    = errors.New("no Find stream")
+	ErrNoSectionOffset = errors.New("no Find section offset")
+	ErrNoFindSection   = errors.New("no Find section")
+	ErrNoFindSegment   = errors.New("no Find segment")
 	ErrWhence          = errors.New("whence error")
 	ErrJournal         = errors.New("journal error")
-	ErrClose           = errors.New("Store close")
 )

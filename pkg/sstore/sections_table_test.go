@@ -104,7 +104,7 @@ func TestSectionsTable(t *testing.T) {
 				sections, ok := table.sectionsMap[int64(i)]
 				if last == false {
 					assert.True(t, ok)
-					section, _, err := sections.find(stream.begin)
+					section, _, err := sections.Find(stream.begin)
 					assert.NoError(t, err)
 					assert.True(t, section.begin > stream.begin, fmt.Sprintf("%d %d %d %d",
 						section.begin, section.end, stream.begin, stream.end))

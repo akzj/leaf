@@ -115,7 +115,7 @@ func TestSections(t *testing.T) {
 
 	t.Run("find_segment", func(t *testing.T) {
 		for i := int64(1); i <= offsets[len(offsets)-1].end; i++ {
-			item, _, err := sections.find(i)
+			item, _, err := sections.Find(i)
 			assert.NoError(t, err)
 			assert.NotNil(t, item.segment)
 			assert.True(t, item.begin <= i && i <= item.end, fmt.Sprintf("%d %d %d", item.begin, i, item.end))
@@ -138,7 +138,7 @@ func TestSections(t *testing.T) {
 
 	t.Run("find_m_stream", func(t *testing.T) {
 		for i := int64(1); i <= offsets[len(offsets)-1].end; i++ {
-			item, _, err := sections.find(i)
+			item, _, err := sections.Find(i)
 			assert.NoError(t, err)
 			assert.NotNil(t, item.segment)
 			assert.NotNil(t, item.stream)
@@ -154,14 +154,14 @@ func TestSections(t *testing.T) {
 				begin:   offset.begin,
 				end:     offset.end,
 			})
-			item, _, err := sections.find(offset.begin)
+			item, _, err := sections.Find(offset.begin)
 			assert.NoError(t, err)
 			assert.NotNil(t, item.stream)
 			assert.Nil(t, item.segment)
 		}
 	})
 
-	t.Run("find", func(t *testing.T) {
+	t.Run("Find", func(t *testing.T) {
 		for _, offset := range offsets {
 			sections.remove(Section{
 				stream: &stream{
@@ -171,7 +171,7 @@ func TestSections(t *testing.T) {
 				begin: offset.begin,
 				end:   offset.end,
 			})
-			item, _, err := sections.find(offset.begin)
+			item, _, err := sections.Find(offset.begin)
 			if err != nil {
 				assert.NotEqual(t, item.begin, offset.begin)
 			}

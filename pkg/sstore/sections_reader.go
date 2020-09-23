@@ -44,7 +44,7 @@ func (r *sectionsReader) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekEnd:
 		limit, ok := r.endMap.get(r.streamID)
 		if !ok {
-			panic("no find stream end")
+			panic("no Find stream end")
 		}
 		offset += limit
 	}
@@ -60,7 +60,7 @@ func (r *sectionsReader) Read(p []byte) (int, error) {
 	buf := p
 	var size int
 	for len(buf) > 0 {
-		section, last, err := r.sections.find(r.offset)
+		section, last, err := r.sections.Find(r.offset)
 		if err != nil {
 			return 0, err
 		}

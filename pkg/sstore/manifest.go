@@ -298,7 +298,7 @@ func (m *Manifest) DeleteJournal(deleteJournal *pb.DeleteJournal) error {
 		}
 	}
 	if find == false {
-		return errors.Errorf("no find journal file [%s]", filename)
+		return errors.Errorf("no Find journal file [%s]", filename)
 	}
 	if m.inRecovery {
 		return nil
@@ -350,7 +350,7 @@ func (m *Manifest) GetJournalMeta(filename string) (*pb.JournalMeta, error) {
 	defer m.locker.Unlock()
 	header, ok := m.JournalMetas[filename]
 	if !ok {
-		return header, errors.Errorf("no find meta [%s]", filename)
+		return header, errors.Errorf("no Find meta [%s]", filename)
 	}
 	return header, nil
 }
@@ -360,7 +360,7 @@ func (m *Manifest) DelJournalMeta(header *pb.DelJournalMeta) error {
 	defer m.locker.Unlock()
 	_, ok := m.JournalMetas[filepath.Base(header.Filename)]
 	if ok == false {
-		return errors.Errorf("no find journal [%s]", header.Filename)
+		return errors.Errorf("no Find journal [%s]", header.Filename)
 	}
 	delete(m.JournalMetas, filepath.Base(header.Filename))
 	if m.inRecovery {
@@ -384,7 +384,7 @@ func (m *Manifest) DeleteSegment(deleteS *pb.DeleteSegment) error {
 		}
 	}
 	if find == false {
-		return errors.Errorf("no find segment [%s]", filename)
+		return errors.Errorf("no Find segment [%s]", filename)
 	}
 	if m.inRecovery {
 		return nil

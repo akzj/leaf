@@ -104,7 +104,7 @@ func (s *segment) FromVersion() *pb.Version {
 func (s *segment) offsetInfo(streamID int64) (*pb.SectionOffset, error) {
 	indexInfo, ok := s.meta.SectionOffsets[streamID]
 	if ok == false {
-		return indexInfo, ErrNoFindIndexInfo
+		return indexInfo, ErrNoSectionOffset
 	}
 	return indexInfo, nil
 }

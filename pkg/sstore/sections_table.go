@@ -94,7 +94,7 @@ func (table *sectionsTable) removeSectionWithSegment(segment *segment) error {
 				table.removeEmptySections(info.StreamID)
 			}
 		} else {
-			return errors.Errorf("no find Sections for %d", info.StreamID)
+			return errors.Errorf("no Find Sections for %d", info.StreamID)
 		}
 	}
 	return nil
@@ -126,7 +126,7 @@ func (table *sectionsTable) RemoveSectionWithStream(stream *stream) {
 			table.removeEmptySections(stream.streamID)
 		}
 	} else {
-		panic("no find Sections")
+		panic("no Find Sections")
 	}
 }
 

@@ -32,7 +32,7 @@ func (store *Store) clearJournal() error {
 	last := segmentFiles[len(segmentFiles)-1]
 	segment := store.getSegment(last)
 	if segment == nil {
-		return errors.Errorf("no find segment [%s]", last)
+		return errors.Errorf("no Find segment [%s]", last)
 	}
 	FromVersion := segment.FromVersion()
 	segment.DecRef()
@@ -67,7 +67,7 @@ func (store *Store) clearSegment() error {
 	for _, filename := range deleteFiles {
 		segment := store.getSegment(filename)
 		if segment == nil {
-			return errors.Errorf("no find segment[%s]", filename)
+			return errors.Errorf("no Find segment[%s]", filename)
 		}
 		if err := store.manifest.DeleteSegment(&pb.DeleteSegment{Filename: filename}); err != nil {
 			return err
