@@ -359,7 +359,7 @@ func (store *Store) commitSegmentFile(filename string) error {
 	return nil
 }
 
-func (store *Store) CreateSegmentWriter(filename string) (*SegmentWriter, error) {
+func (store *Store) CreateSegmentWriter(filename string) (*SegmentReceiver, error) {
 	segmentID, err := strconv.ParseInt(strings.Split(filename, ".")[0], 10, 64)
 	if err != nil {
 		return nil, err
@@ -372,7 +372,7 @@ func (store *Store) CreateSegmentWriter(filename string) (*SegmentWriter, error)
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}
-	writer := &SegmentWriter{
+	writer := &SegmentReceiver{
 		f: f,
 		discard: func() error {
 			_ = f.Close()

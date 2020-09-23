@@ -52,7 +52,7 @@ func (store *Store) clearJournal() error {
 			if err := store.manifest.DelJournalMeta(&pb.DelJournalMeta{Filename: filename}); err != nil {
 				return err
 			}
-			store.syncer.deleteJournal(journalFile)
+			store.syncer.DeleteJournal(journalFile)
 		}
 	}
 	return nil

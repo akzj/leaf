@@ -380,7 +380,7 @@ func TestAsyncAppend(t *testing.T) {
 			time.Sleep(time.Second * 5)
 		}
 	}()
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 100; i++ {
 		for i2 := 0; i2 < 100000; i2++ {
 			wg.Add(1)
 			sstore.AsyncAppend(int64(i2), data, -1, func(offset int64, err error) {

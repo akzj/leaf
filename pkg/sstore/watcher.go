@@ -98,7 +98,7 @@ func (streamWatcher *streamWatcher) newEndWatcher(streamID int64) *Watcher {
 	return &watcher
 }
 
-func (streamWatcher *streamWatcher) getEndWatcher(streamID int64) []Watcher {
+func (streamWatcher *streamWatcher) getWatcher(streamID int64) []Watcher {
 	streamWatcher.endWatcherLock.RLock()
 	watcher, _ := streamWatcher.watcherMap[streamID]
 	streamWatcher.endWatcherLock.RUnlock()
@@ -114,7 +114,7 @@ func (streamWatcher *streamWatcher) notifyLoop() {
 		}
 		for _, item := range items {
 			item := item.(notify)
-			for _, watcher := range streamWatcher.getEndWatcher(item.streamID) {
+			for _, watcher := range streamWatcher.getWatcher(item.streamID) {
 				watcher.notify(item.end)
 			}
 		}

@@ -160,7 +160,7 @@ func (j *journal) Write(entry *pb.Entry) error {
 	if _, err := j.writer.Write(data); err != nil {
 		return err
 	}
-	j.index.append(jIndex{
+	j.index.append(journalOffset{
 		Offset: j.size,
 		Index:  entry.Ver.Index,
 	})
@@ -229,7 +229,7 @@ func (j *journal) Range(callback func(entry *pb.Entry) error) error {
 		if j.meta.From.Index == 0 {
 			j.meta.From = entry.Ver
 		}
-		j.index.append(jIndex{
+		j.index.append(journalOffset{
 			Offset: offset,
 			Index:  entry.Ver.Index,
 		})
@@ -242,6 +242,7 @@ func (j *journal) Range(callback func(entry *pb.Entry) error) error {
 func (j *journal) Index() *journalIndex {
 	return j.index
 }
+
 
 func DecodeEntry(reader io.Reader) (*pb.Entry, error) {
 	var size int32

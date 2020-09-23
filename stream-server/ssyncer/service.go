@@ -22,11 +22,12 @@ import (
 	"github.com/akzj/streamIO/proto"
 	log "github.com/sirupsen/logrus"
 	"io"
+	"path/filepath"
 	"sync/atomic"
 )
 
 /*
-ssyncer stream from master
+sync stream from master
 */
 type Service struct {
 	store *sstore.Store
@@ -43,7 +44,7 @@ func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncServi
 	err := s.store.Sync(stream.Context(), request.StreamServerId, request.Index, func(callback sstore.SyncCallback) error {
 		if callback.Segment != nil {
 			if err := stream.Send(&proto.SyncResponse{SegmentInfo: &proto.SegmentBegin{
-				Name: callback.Segment.Filename(),
+				Name: filepath.Base(callback.Segment.Filename()),
 				Size: callback.Segment.Size(),
 			}}); err != nil {
 				log.Errorf("%+v\n", err)
@@ -81,74 +82,77 @@ func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncServi
 					return err
 				}
 			}
-		} else {
-			var size int
-			var response = proto.SyncResponse{Entries: make([]*pb.Entry, 0, 64)}
-			var appendEntry = func(entry *pb.Entry) {
-				if callback.Index != nil {
-					atomic.AddInt64(callback.Index, 1)
-				}
-				if entryIndex == 0 {
-					entryIndex = entry.Ver.Index
-				} else {
-					entryIndex++
-					if entryIndex != entry.Ver.Index {
-						log.Panic(entryIndex, entry)
-					}
-				}
-				response.Entries = append(response.Entries, entry)
-				size += len(entry.Data) + 32
+			return nil
+		}
+		var size int
+		var response = proto.SyncResponse{Entries: make([]*pb.Entry, 0, 64)}
+		var appendEntry = func(entry *pb.Entry) {
+			if callback.Index != nil {
+				atomic.AddInt64(callback.Index, 1)
 			}
-			var responseEntry = func() error {
-				if len(response.Entries) != 0 {
-					if err := stream.Send(&response); err != nil {
-						log.Errorf(err.Error())
-						return err
-					}
-					size = 0
-					response = proto.SyncResponse{Entries: make([]*pb.Entry, 0, 64)}
+			if entryIndex == 0 {
+				entryIndex = entry.Ver.Index
+			} else {
+				entryIndex++
+				if entryIndex != entry.Ver.Index {
+					log.Panic(entryIndex, entry)
 				}
-				return nil
 			}
-
-			if callback.Entry != nil {
-				appendEntry(callback.Entry)
-				callback.Entry = nil
-			}
-			if callback.EntryQueue != nil {
-				for {
-					items, err := callback.EntryQueue.PopAll(nil)
-					if err != nil {
-						if err == context.Canceled {
-							break
-						}
-						return err
-					}
-					for _, item := range items {
-						var entry *pb.Entry
-						switch item := item.(type) {
-						case *pb.Entry:
-							entry = item
-						case *sstore.WriteEntry:
-							entry = item.Entry
-						default:
-							panic(item)
-						}
-						appendEntry(entry)
-						if size > 1024*1024 {
-							if err := responseEntry(); err != nil {
-								return err
-							}
-						}
-					}
-					if err := responseEntry(); err != nil {
-						return err
-					}
-				}
-				if err := responseEntry(); err != nil {
+			response.Entries = append(response.Entries, entry)
+			size += len(entry.Data) + 32
+		}
+		var sendEntry = func() error {
+			if len(response.Entries) != 0 {
+				if err := stream.Send(&response); err != nil {
+					log.Errorf(err.Error())
 					return err
 				}
+				size = 0
+				response = proto.SyncResponse{Entries: make([]*pb.Entry, 0, 64)}
 			}
+			return nil
+		}
+
+		var items []interface{}
+		var err error
+		for {
+			if size == 0 {
+				items, err = callback.EntryQueue.PopAll(nil)
+			} else {
+				items, err = callback.EntryQueue.PopAllWithoutBlock(nil)
+			}
+			if err != nil {
+				if err == context.Canceled {
+					break
+				}
+				return err
+			}
+			if len(items) == 0 {
+				if err := sendEntry(); err != nil {
+					return err
+				}
+				continue
+			}
+			for _, item := range items {
+				var entry *pb.Entry
+				switch item := item.(type) {
+				case *pb.Entry:
+					entry = item
+				case *sstore.WriteEntry:
+					entry = item.Entry
+				default:
+					panic(item)
+				}
+				appendEntry(entry)
+				if size > 1024*1024 {
+					if err := sendEntry(); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		if err := sendEntry(); err != nil {
+			return err
 		}
 		return nil
 	})

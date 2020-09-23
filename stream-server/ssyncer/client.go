@@ -55,7 +55,7 @@ func (c *Client) Start(ctx context.Context, localStreamServiceID int64, serviceA
 		return errors.WithStack(err)
 	}
 	cc := proto.NewSyncServiceClient(conn)
-	var segmentWriter *sstore.SegmentWriter
+	var segmentWriter *sstore.SegmentReceiver
 	defer func() {
 		if segmentWriter != nil {
 			_ = segmentWriter.Discard()
