@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"github.com/akzj/block-queue"
 	"github.com/akzj/streamIO/client"
-	"github.com/akzj/streamIO/pkg/utils"
+	"github.com/akzj/streamIO/pkg/listenutils"
 	"github.com/akzj/streamIO/proto"
 	"github.com/eclipse/paho.mqtt.golang/packets"
 	pproto "github.com/golang/protobuf/proto"
@@ -188,7 +188,7 @@ func (broker *Broker) serve(listener net.Listener) {
 
 func (broker *Broker) webSocketListenLoop() error {
 	if broker.WSPort != 0 {
-		l, err := utils.NewListener(broker.HOST, broker.WSPort, nil)
+		l, err := listenutils.Listen(broker.HOST, broker.WSPort, nil)
 		if err != nil {
 			return err
 		}
@@ -199,7 +199,7 @@ func (broker *Broker) webSocketListenLoop() error {
 		}()
 	}
 	if broker.WSSPort != 0 {
-		l, err := utils.NewListener(broker.HOST, broker.WSSPort, broker.WSTLSConfig)
+		l, err := listenutils.Listen(broker.HOST, broker.WSSPort, broker.WSTLSConfig)
 		if err != nil {
 			return err
 		}
@@ -214,14 +214,14 @@ func (broker *Broker) webSocketListenLoop() error {
 
 func (broker *Broker) clientTCPListenLoop() error {
 	if broker.BindTLSPort != 0 {
-		l, err := utils.NewListener(broker.HOST, broker.BindTLSPort, broker.tlsConfig)
+		l, err := listenutils.Listen(broker.HOST, broker.BindTLSPort, broker.tlsConfig)
 		if err != nil {
 			return err
 		}
 		go broker.serve(l)
 	}
 	if broker.BindPort != 0 {
-		l, err := utils.NewListener(broker.HOST, broker.BindPort, nil)
+		l, err := listenutils.Listen(broker.HOST, broker.BindPort, nil)
 		if err != nil {
 			return err
 		}

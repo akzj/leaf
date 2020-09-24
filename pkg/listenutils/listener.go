@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package utils
+package listenutils
 
 import (
 	"crypto/tls"
@@ -20,7 +20,7 @@ import (
 	"strconv"
 )
 
-func NewListener(host string, port int, tlsConfig *tls.Config) (net.Listener, error) {
+func Listen(host string, port int, tlsConfig *tls.Config) (net.Listener, error) {
 	if tlsConfig == nil {
 		listener, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 		if err != nil {

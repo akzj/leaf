@@ -16,8 +16,8 @@ package sstore
 import (
 	"bufio"
 	"encoding/binary"
+	"github.com/akzj/streamIO/pkg/ref"
 	"github.com/akzj/streamIO/pkg/sstore/pb"
-	"github.com/akzj/streamIO/pkg/utils"
 	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
 	"hash/crc32"
@@ -27,7 +27,7 @@ import (
 )
 
 type segment struct {
-	*utils.RefCount
+	*ref.RefCount
 	filename string
 	f        *os.File
 	meta     *pb.SegmentMeta
@@ -48,7 +48,7 @@ func newSegment() *segment {
 		l:      new(sync.RWMutex),
 		delete: false,
 	}
-	sm.RefCount = utils.NewRefCount(0, func() {
+	sm.RefCount = ref.NewRefCount(0, func() {
 		_ = sm.close()
 	})
 	return sm
