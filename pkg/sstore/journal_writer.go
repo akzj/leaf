@@ -25,7 +25,7 @@ type journalWriter struct {
 	journal        *journal
 	queue          *block_queue.QueueWithContext
 	commitQueue    *block_queue.QueueWithContext
-	syncQueue      *block_queue.QueueWithContext
+	appendCh       chan interface{}
 	syncer         *Syncer
 	manifest       *Manifest
 	maxJournalSize int64
@@ -34,14 +34,14 @@ type journalWriter struct {
 func newJournalWriter(journal *journal,
 	queue *block_queue.QueueWithContext,
 	commitQueue *block_queue.QueueWithContext,
-	syncQueue *block_queue.QueueWithContext,
+	appendCh chan interface{},
 	syncer *Syncer,
 	files *Manifest, maxWalSize int64) *journalWriter {
 	return &journalWriter{
 		journal:        journal,
 		queue:          queue,
 		commitQueue:    commitQueue,
-		syncQueue:      syncQueue,
+		appendCh:       appendCh,
 		syncer:         syncer,
 		manifest:       files,
 		maxJournalSize: maxWalSize,
@@ -108,9 +108,9 @@ func (jWriter *journalWriter) writeLoop() {
 		if err := jWriter.commitQueue.PushMany(items); err != nil {
 			log.Fatal(err)
 		}
-		if err := jWriter.syncQueue.PushMany(items); err != nil {
-			log.Fatal(err)
+		select {
+		case jWriter.appendCh <- struct{}{}:
+		default:
 		}
-
 	}
 }

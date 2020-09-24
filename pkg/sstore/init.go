@@ -85,7 +85,7 @@ func (store *Store) init() error {
 	store.gogo(store.flusher.flushLoop)
 	store.gogo(store.committer.processLoop)
 	store.gogo(store.streamWatcher.notifyLoop)
-	store.gogo(store.syncer.pushEntryLoop)
+	store.gogo(store.syncer.notifySubscriberLoop)
 	store.gogo(store.sectionsTableUpdater.updateLoop)
 
 	//rebuild segment index
@@ -184,7 +184,7 @@ func (store *Store) init() error {
 	store.journalWriter = newJournalWriter(leastJournal,
 		journalQueue,
 		store.committer.queue,
-		store.syncer.queue,
+		store.syncer.journalAppendCh,
 		store.syncer,
 		store.manifest,
 		store.options.MaxJournalSize)
@@ -218,8 +218,6 @@ func (store *Store) init() error {
 	}
 	return nil
 }
-
-
 
 func listDir(dir string, ext string) ([]string, error) {
 	var files []string
