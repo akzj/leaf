@@ -23,7 +23,6 @@ require (
 	github.com/sirupsen/logrus v1.6.0
 	github.com/stretchr/testify v1.6.1
 	github.com/urfave/cli/v2 v2.2.0
-	go.etcd.io/bbolt v1.3.3
 	go.etcd.io/etcd v0.0.0-20200520232829-54ba9589114f //https://github.com/etcd-io/etcd/issues/11154
 	go.uber.org/zap v1.10.0
 	golang.org/x/exp v0.0.0-20200224162631-6cc2880d07d6
