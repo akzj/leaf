@@ -1,4 +1,5 @@
 // Copyright 2015 The etcd Authors
+// Copyright 2020-2026 The streamIO Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,21 +13,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package etcdserver
+package raftnode
 
 import (
+	"path/filepath"
+
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"path/filepath"
 )
 
 // Config holds the configuration of etcd as taken from the command line or discovery.
 type Config struct {
-	Name           string
-	DataDir        string
-	// DedicatedWALDir config will make the etcd to write the WAL to the WALDir
-	// rather than the dataDir/member/wal.
-	DedicatedWALDir string
+	Name    string
+	DataDir string
 
 	ElectionTicks int
 
@@ -49,8 +48,5 @@ type Config struct {
 func (c *Config) MemberDir() string { return filepath.Join(c.DataDir, "member") }
 
 func (c *Config) WALDir() string {
-	if c.DedicatedWALDir != "" {
-		return c.DedicatedWALDir
-	}
 	return filepath.Join(c.MemberDir(), "wal")
 }
