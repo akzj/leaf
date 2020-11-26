@@ -61,7 +61,7 @@ func (c *committer) flush() {
 }
 
 func (c *committer) processLoop() {
-	var mStreams = make([]*stream, 0, 128)
+	var newStreams = make([]*stream, 0, 128)
 	for {
 		items, err := c.queue.PopAll(nil)
 		if err != nil {
@@ -73,27 +73,24 @@ func (c *committer) processLoop() {
 			if c.streamTable.size >= c.store.options.MaxMStreamTableSize {
 				c.flush()
 			}
-			request := item.(*WriteEntry)
-			mStream, err := c.streamTable.appendEntry(request.Entry, &request.end)
+			request := item.(*BatchAppend)
+			streams, notifyList, err := c.streamTable.appendBatchEntry(request.Entry)
 			if err != nil {
 				request.err = err
 				continue
 			}
-			if mStream != nil {
-				mStreams = append(mStreams, mStream)
+			if streams != nil {
+				newStreams = append(newStreams, streams...)
 			}
-			notifies = append(notifies, notify{
-				streamID: request.Entry.StreamID,
-				end:      request.end,
-			})
+			notifies = append(notifies, notifyList)
 		}
 		update := updateSectionTable{
 			notifies:  notifies,
 			callbacks: items,
 		}
-		if len(mStreams) != 0 {
-			update.mStreams = mStreams
-			mStreams = make([]*stream, 0, 128)
+		if len(newStreams) != 0 {
+			update.mStreams = newStreams
+			newStreams = make([]*stream, 0, 128)
 		}
 		if err := c.indexUpdateQueue.Push(update); err != nil {
 			log.Fatal(err)

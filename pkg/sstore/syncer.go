@@ -143,7 +143,7 @@ func (syncer *Syncer) syncJournal(ctx context.Context, index *int64,
 		log.Debug("index", atomic.LoadInt64(index))
 	}()
 	for count = journal.GetFlushIndex() - atomic.LoadInt64(index); count >= 0; count-- {
-		entry, err := DecodeEntry(reader)
+		batchEntry, err := DecodeBatchEntry(reader)
 		if err != nil {
 			log.Error(err)
 			if err == io.EOF {
@@ -156,11 +156,11 @@ func (syncer *Syncer) syncJournal(ctx context.Context, index *int64,
 			}
 			return err
 		}
-		if entry.Ver.Index != atomic.LoadInt64(index) {
-			log.Panic(*index, entry.Ver)
+		if batchEntry.Ver.Index != atomic.LoadInt64(index) {
+			log.Panic(*index, batchEntry.Ver)
 		}
 		atomic.AddInt64(index, 1)
-		if err := queue.Push(entry); err != nil {
+		if err := queue.Push(batchEntry); err != nil {
 			return err
 		}
 	}

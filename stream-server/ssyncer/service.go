@@ -85,21 +85,23 @@ func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncServi
 			return nil
 		}
 		var size int
-		var response = proto.SyncResponse{Entries: make([]*pb.Entry, 0, 64)}
-		var appendEntry = func(entry *pb.Entry) {
+		var response = proto.SyncResponse{Entries: make([]*pb.BatchEntry, 0, 64)}
+		var appendEntry = func(batchEntry *pb.BatchEntry) {
 			if callback.Index != nil {
 				atomic.AddInt64(callback.Index, 1)
 			}
 			if entryIndex == 0 {
-				entryIndex = entry.Ver.Index
+				entryIndex = batchEntry.Ver.Index
 			} else {
 				entryIndex++
-				if entryIndex != entry.Ver.Index {
-					log.Panic(entryIndex, entry)
+				if entryIndex != batchEntry.Ver.Index {
+					log.Panic(entryIndex, batchEntry)
 				}
 			}
-			response.Entries = append(response.Entries, entry)
-			size += len(entry.Data) + 32
+			response.Entries = append(response.Entries, batchEntry)
+			for _, entry := range batchEntry.Entries {
+				size += len(entry.Data) + 32
+			}
 		}
 		var sendEntry = func() error {
 			if len(response.Entries) != 0 {
@@ -108,7 +110,7 @@ func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncServi
 					return err
 				}
 				size = 0
-				response = proto.SyncResponse{Entries: make([]*pb.Entry, 0, 64)}
+				response = proto.SyncResponse{Entries: make([]*pb.BatchEntry, 0, 64)}
 			}
 			return nil
 		}
@@ -134,12 +136,10 @@ func (s *Service) SyncRequest(request *proto.SyncRequest, stream proto.SyncServi
 				continue
 			}
 			for _, item := range items {
-				var entry *pb.Entry
+				var entry *pb.BatchEntry
 				switch item := item.(type) {
-				case *pb.Entry:
+				case *pb.BatchEntry:
 					entry = item
-				case *sstore.WriteEntry:
-					entry = item.Entry
 				default:
 					panic(item)
 				}

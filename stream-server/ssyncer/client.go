@@ -154,7 +154,7 @@ func (c *Client) Start(ctx context.Context, localStreamServiceID int64, serviceA
 					}
 					atomic.AddInt64(&count, 1)
 					wg.Add(1)
-					c.sstore.AppendEntryWithCb(entry, func(offset int64, cbError error) {
+					c.sstore.AppendEntryWithCb(entry, func(cbError error) {
 						wg.Done()
 						if cbError != nil {
 							log.Warn(cbError)

@@ -43,12 +43,11 @@ func TestSectionsTable(t *testing.T) {
 				index++
 				dataBuffer.Write(data)
 				for streamID := 0; streamID < streamCount; streamID++ {
-					_, err := table.appendEntry(&pb.Entry{
+					_, _, err := table.appendEntry(&pb.Entry{
 						StreamID: int64(streamID),
 						Offset:   -1,
 						Data:     data,
-						Ver:      &pb.Version{Index: index},
-					}, nil)
+					}, &pb.Version{Index: index})
 					assert.NoError(t, err)
 				}
 			}

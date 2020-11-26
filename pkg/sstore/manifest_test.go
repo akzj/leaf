@@ -65,11 +65,9 @@ func TestManifest(t *testing.T) {
 				Old:      true,
 				Filename: fmt.Sprintf("%d.log", i),
 				From: &pb.Version{
-					Term:  0,
 					Index: int64(i),
 				},
 				To: &pb.Version{
-					Term:  0,
 					Index: int64(i),
 				},
 			}))

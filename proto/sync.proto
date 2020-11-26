@@ -43,7 +43,7 @@ message SyncResponse{
   SegmentBegin segment_info = 1;
   SegmentData segment_data = 2;
   SegmentEnd segment_end = 3;
-  repeated pb.Entry entries = 4;
+  repeated pb.BatchEntry entries = 4;
 }
 
 

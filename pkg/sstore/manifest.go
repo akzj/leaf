@@ -114,57 +114,59 @@ func (m *Manifest) init() error {
 			return err
 		}
 	}
-	err = m.journal.Range(func(entry *pb.Entry) error {
-		m.Version = entry.Ver
-		switch entry.StreamID {
-		case appendSegmentType:
-			var message pb.AppendSegment
-			if err := proto.Unmarshal(entry.Data, &message); err != nil {
-				return errors.WithStack(err)
+	err = m.journal.Range(func(batchEntry *pb.BatchEntry) error {
+		m.Version = batchEntry.Ver
+		for _,entry := range batchEntry.Entries {
+			switch entry.StreamID {
+			case appendSegmentType:
+				var message pb.AppendSegment
+				if err := proto.Unmarshal(entry.Data, &message); err != nil {
+					return errors.WithStack(err)
+				}
+				return m.AppendSegment(&message)
+			case deleteSegmentType:
+				var message pb.DeleteSegment
+				if err := proto.Unmarshal(entry.Data, &message); err != nil {
+					return errors.WithStack(err)
+				}
+				return m.DeleteSegment(&message)
+			case appendJournalType:
+				var message pb.AppendJournal
+				if err := proto.Unmarshal(entry.Data, &message); err != nil {
+					return errors.WithStack(err)
+				}
+				return m.AppendJournal(&message)
+			case deleteJournalType:
+				var message pb.DeleteJournal
+				if err := proto.Unmarshal(entry.Data, &message); err != nil {
+					return errors.WithStack(err)
+				}
+				return m.DeleteJournal(&message)
+			case manifestSnapshotType:
+				if err := proto.Unmarshal(entry.Data, m); err != nil {
+					return errors.WithStack(err)
+				}
+			case setJournalMetaType:
+				var message pb.JournalMeta
+				if err := proto.Unmarshal(entry.Data, &message); err != nil {
+					return errors.WithStack(err)
+				}
+				return m.SetJournalMeta(&message)
+			case FilesIDType:
+				var message pb.FileID
+				if err := proto.Unmarshal(entry.Data, &message); err != nil {
+					return errors.WithStack(err)
+				}
+				m.FileID = &message
+			case delJournalMetaType:
+				var message pb.DelJournalMeta
+				if err := proto.Unmarshal(entry.Data, &message); err != nil {
+					return err
+				}
+				return m.DelJournalMeta(&message)
+			default:
+				log.Fatalf("unknown type %d", entry.StreamID)
 			}
-			return m.AppendSegment(&message)
-		case deleteSegmentType:
-			var message pb.DeleteSegment
-			if err := proto.Unmarshal(entry.Data, &message); err != nil {
-				return errors.WithStack(err)
-			}
-			return m.DeleteSegment(&message)
-		case appendJournalType:
-			var message pb.AppendJournal
-			if err := proto.Unmarshal(entry.Data, &message); err != nil {
-				return errors.WithStack(err)
-			}
-			return m.AppendJournal(&message)
-		case deleteJournalType:
-			var message pb.DeleteJournal
-			if err := proto.Unmarshal(entry.Data, &message); err != nil {
-				return errors.WithStack(err)
-			}
-			return m.DeleteJournal(&message)
-		case manifestSnapshotType:
-			if err := proto.Unmarshal(entry.Data, m); err != nil {
-				return errors.WithStack(err)
-			}
-		case setJournalMetaType:
-			var message pb.JournalMeta
-			if err := proto.Unmarshal(entry.Data, &message); err != nil {
-				return errors.WithStack(err)
-			}
-			return m.SetJournalMeta(&message)
-		case FilesIDType:
-			var message pb.FileID
-			if err := proto.Unmarshal(entry.Data, &message); err != nil {
-				return errors.WithStack(err)
-			}
-			m.FileID = &message
-		case delJournalMetaType:
-			var message pb.DelJournalMeta
-			if err := proto.Unmarshal(entry.Data, &message); err != nil {
-				return err
-			}
-			return m.DelJournalMeta(&message)
-		default:
-			log.Fatalf("unknown type %d", entry.StreamID)
 		}
 		return nil
 	})
@@ -192,11 +194,14 @@ func (m *Manifest) compactionLog() error {
 	if err != nil {
 		return err
 	}
-	if err := journal.Write(&pb.Entry{
-		StreamID: manifestSnapshotType,
-		Offset:   0,
-		Data:     data,
-		Ver:      m.Version,
+	if err := journal.BatchWrite(&pb.BatchEntry{Entries: []*pb.Entry{
+		{
+			StreamID: manifestSnapshotType,
+			Offset:   0,
+			Data:     data,
+		},
+	},
+		Ver: m.Version,
 	}); err != nil {
 		return err
 	}
@@ -395,12 +400,12 @@ func (m *Manifest) DeleteSegment(deleteS *pb.DeleteSegment) error {
 
 func (m *Manifest) writeEntry(typ int64, data []byte, ) error {
 	m.Version.Index++
-	if err := m.journal.Write(&pb.Entry{
-		StreamID: typ,
-		Offset:   0,
-		Data:     data,
-		Ver:      m.Version,
-	}); err != nil {
+	if err := m.journal.BatchWrite(&pb.BatchEntry{Entries: []*pb.Entry{
+		&pb.Entry{
+			StreamID: typ,
+			Offset:   0,
+			Data:     data,
+		}}, Ver: m.Version}); err != nil {
 		return err
 	}
 	if err := m.journal.Flush(); err != nil {

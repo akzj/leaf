@@ -29,7 +29,6 @@ message WriteStreamEntry{
 }
 message WriteStreamResult{
   int64 stream_id = 1;
-  int64 offset = 2;
   int64 request_id = 3;
   string err = 4;
 }

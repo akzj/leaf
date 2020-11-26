@@ -52,11 +52,13 @@ func TestJournal(t *testing.T) {
 	var count = 10000
 	t.Run("test_journal_write", func(t *testing.T) {
 		for i := 0; i < count; i++ {
-			assert.NoError(t, journal.Write(&pb.Entry{
-				StreamID: 0,
-				Offset:   0,
-				Data:     []byte(strconv.Itoa(i)),
-				Ver:      &pb.Version{Index: int64(i)},
+			assert.NoError(t, journal.BatchWrite(&pb.BatchEntry{Entries: []*pb.Entry{
+				&pb.Entry{
+					StreamID: 0,
+					Offset:   0,
+					Data:     []byte(strconv.Itoa(i)),
+				},
+			}, Ver: &pb.Version{Index: int64(i)},
 			}))
 			assert.NoError(t, journal.Flush())
 		}
@@ -73,7 +75,7 @@ func TestJournal(t *testing.T) {
 			assert.NoError(t, err)
 			_, err = reader.Seek(index.Offset, io.SeekStart)
 			assert.NoError(t, err)
-			entry, err := DecodeEntry(reader)
+			entry, err := DecodeBatchEntry(reader)
 			assert.NoError(t, err)
 			assert.Equal(t, int64(i), entry.Ver.Index)
 		}
@@ -92,7 +94,7 @@ func TestJournal(t *testing.T) {
 
 	t.Run("test_Journal_range_entry", func(t *testing.T) {
 		var index int64
-		assert.NoError(t, journal.Range(func(entry *pb.Entry) error {
+		assert.NoError(t, journal.Range(func(entry *pb.BatchEntry) error {
 			assert.Equal(t, entry.Ver.Index, index)
 			index++
 			return nil

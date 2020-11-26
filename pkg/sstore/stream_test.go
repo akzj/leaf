@@ -68,7 +68,7 @@ func TestStream(t *testing.T) {
 		},
 	}
 
-	t.Run("Write", func(t *testing.T) {
+	t.Run("BatchWrite", func(t *testing.T) {
 		for _, C := range writeCases {
 			data := makeData(C.size)
 			n, err := stream.WriteAt(data, C.offset)

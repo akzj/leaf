@@ -11,31 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sstore
+package raftrpc
 
-import (
-	"github.com/akzj/streamIO/pkg/block-queue"
-	log "github.com/sirupsen/logrus"
-)
 
-type callbackWorker struct {
-	queue *block_queue.QueueWithContext
-}
-
-func newCallbackWorker(queue *block_queue.QueueWithContext) *callbackWorker {
-	return &callbackWorker{queue: queue}
-}
-
-func (worker *callbackWorker) callbackLoop() {
-	for {
-		items, err := worker.queue.PopAll(nil)
-		if err != nil {
-			log.Warn(err)
-			return
-		}
-		for _, item := range items {
-			request := item.(*BatchAppend)
-			request.cb(request.err)
-		}
-	}
-}

@@ -134,20 +134,21 @@ func (store *Store) init() error {
 				continue
 			}
 		}
-		if err := journal.Range(func(entry *pb.Entry) error {
+		if err := journal.Range(func(entry *pb.BatchEntry) error {
 			if entry.Ver.Index <= store.version.Index {
 				return nil
 			} else if entry.Ver.Index == store.version.Index+1 {
 				store.version = entry.Ver
-				if err := store.committer.queue.Push(&WriteEntry{
+				if err := store.committer.queue.Push(&BatchAppend{
 					Entry: entry,
-					cb:    func(end int64, err error) {},
+					cb:    func(err error) {},
 				}); err != nil {
 					log.Fatal(err)
 				}
 			} else {
 				return errors.WithMessage(ErrJournal,
-					fmt.Sprintf("entry.ID[%d] store.index+1[%d] %s", entry.Ver.Index, store.version.Index+1, filename))
+					fmt.Sprintf("entry.ID[%d] store.index+1[%d] %s",
+						entry.Ver.Index, store.version.Index+1, filename))
 			}
 			return nil
 		}); err != nil {

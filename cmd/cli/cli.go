@@ -302,7 +302,7 @@ func getStreamServerStoreVersion(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("term", version.Term, "index", version.Index)
+	fmt.Println("index", version.Index)
 	return nil
 }
 

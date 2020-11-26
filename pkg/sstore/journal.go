@@ -145,7 +145,7 @@ func (j *journal) Sync() error {
 	return nil
 }
 
-func (j *journal) Write(entry *pb.Entry) error {
+func (j *journal) BatchWrite(entry *pb.BatchEntry) error {
 	j.meta.To = entry.Ver
 	if j.meta.From.Index == 0 {
 		j.meta.From = entry.Ver
@@ -206,7 +206,7 @@ func (o *offsetReader) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-func (j *journal) Range(callback func(entry *pb.Entry) error) error {
+func (j *journal) Range(callback func(entry *pb.BatchEntry) error) error {
 	j.index = new(journalIndex)
 	if _, err := j.f.Seek(0, io.SeekStart); err != nil {
 		return err
@@ -217,23 +217,23 @@ func (j *journal) Range(callback func(entry *pb.Entry) error) error {
 	}
 	for {
 		var offset = offsetReader.offset
-		entry, err := DecodeEntry(offsetReader)
+		batchEntry, err := DecodeBatchEntry(offsetReader)
 		if err != nil {
 			if err == io.EOF {
 				return nil
 			}
 			return errors.WithStack(err)
 		}
-		j.meta.To = entry.Ver
-		j.flushVer = unsafe.Pointer(entry.Ver)
+		j.meta.To = batchEntry.Ver
+		j.flushVer = unsafe.Pointer(batchEntry.Ver)
 		if j.meta.From.Index == 0 {
-			j.meta.From = entry.Ver
+			j.meta.From = batchEntry.Ver
 		}
 		j.index.append(journalOffset{
 			Offset: offset,
-			Index:  entry.Ver.Index,
+			Index:  batchEntry.Ver.Index,
 		})
-		if err := callback(entry); err != nil {
+		if err := callback(batchEntry); err != nil {
 			return err
 		}
 	}
@@ -243,8 +243,7 @@ func (j *journal) Index() *journalIndex {
 	return j.index
 }
 
-
-func DecodeEntry(reader io.Reader) (*pb.Entry, error) {
+func DecodeBatchEntry(reader io.Reader) (*pb.BatchEntry, error) {
 	var size int32
 	if err := binary.Read(reader, binary.BigEndian, &size); err != nil {
 		return nil, err
@@ -253,7 +252,7 @@ func DecodeEntry(reader io.Reader) (*pb.Entry, error) {
 	if _, err := io.ReadFull(reader, data); err != nil {
 		return nil, err
 	}
-	var entry pb.Entry
+	var entry pb.BatchEntry
 	if err := pproto.Unmarshal(data, &entry); err != nil {
 		return nil, err
 	}

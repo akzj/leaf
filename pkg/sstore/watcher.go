@@ -64,7 +64,7 @@ func newStreamWatcher(queue *block_queue.QueueWithContext) *streamWatcher {
 	}
 }
 
-func (streamWatcher *streamWatcher) removeEndWatcher(index int64, streamID int64) {
+func (streamWatcher *streamWatcher) removeWatcher(index int64, streamID int64) {
 	streamWatcher.endWatcherLock.Lock()
 	defer streamWatcher.endWatcherLock.Unlock()
 	endWatcherS, ok := streamWatcher.watcherMap[streamID]
@@ -82,7 +82,7 @@ func (streamWatcher *streamWatcher) removeEndWatcher(index int64, streamID int64
 	}
 }
 
-func (streamWatcher *streamWatcher) newEndWatcher(streamID int64) *Watcher {
+func (streamWatcher *streamWatcher) newWatcher(streamID int64) *Watcher {
 	streamWatcher.endWatcherLock.Lock()
 	defer streamWatcher.endWatcherLock.Unlock()
 	streamWatcher.watchIndex++
@@ -91,7 +91,7 @@ func (streamWatcher *streamWatcher) newEndWatcher(streamID int64) *Watcher {
 		index: index,
 		posCh: make(chan int64, 1),
 		c: func() {
-			streamWatcher.removeEndWatcher(index, streamID)
+			streamWatcher.removeWatcher(index, streamID)
 		},
 	}
 	streamWatcher.watcherMap[streamID] = append(streamWatcher.watcherMap[streamID], watcher)
@@ -113,9 +113,17 @@ func (streamWatcher *streamWatcher) notifyLoop() {
 			return
 		}
 		for _, item := range items {
-			item := item.(notify)
-			for _, watcher := range streamWatcher.getWatcher(item.streamID) {
-				watcher.notify(item.end)
+			switch item := item.(type) {
+			case notify:
+				for _, watcher := range streamWatcher.getWatcher(item.streamID) {
+					watcher.notify(item.end)
+				}
+			case []notify:
+				for _, item := range item {
+					for _, watcher := range streamWatcher.getWatcher(item.streamID) {
+						watcher.notify(item.end)
+					}
+				}
 			}
 		}
 	}

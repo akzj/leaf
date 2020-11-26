@@ -49,7 +49,7 @@ func TestStore(t *testing.T) {
 		wg.Add(1)
 		_, _ = hash32.Write(data)
 		size += int64(len(data))
-		sstore.AsyncAppend(streamID, data, -1, func(pos int64, err error) {
+		sstore.AsyncAppend(streamID, data, -1, func(err error) {
 			assert.NoError(t, err)
 			wg.Done()
 		})
@@ -112,7 +112,7 @@ func TestSStore_Watcher(t *testing.T) {
 	var data = "hello world"
 	var wg sync.WaitGroup
 	wg.Add(1)
-	sstore.AsyncAppend(streamID, []byte(data), int64(-1), func(offset int64, err error) {
+	sstore.AsyncAppend(streamID, []byte(data), int64(-1), func(err error) {
 		defer wg.Done()
 		if err != nil {
 			t.Fatalf("%+v", err)
@@ -161,7 +161,7 @@ func TestSStore_Watcher(t *testing.T) {
 	time.Sleep(time.Second)
 	wg = sync.WaitGroup{}
 	wg.Add(1)
-	sstore.AsyncAppend(streamID, []byte("hello world2"), -1, func(offset int64, err error) {
+	sstore.AsyncAppend(streamID, []byte("hello world2"), -1, func(err error) {
 		wg.Done()
 		if err != nil {
 			t.Fatalf("%+v", err)
@@ -197,7 +197,7 @@ func TestAsyncAppend(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		for i2 := 0; i2 < 100000; i2++ {
 			wg.Add(1)
-			sstore.AsyncAppend(int64(i2), data, -1, func(offset int64, err error) {
+			sstore.AsyncAppend(int64(i2), data, -1, func(err error) {
 				if err != nil {
 					t.Fatalf("%+v", err)
 				}
