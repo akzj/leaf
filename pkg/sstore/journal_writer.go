@@ -48,8 +48,8 @@ func newJournalWriter(journal *journal,
 	}
 }
 
-//append the WriteEntry to the queue of writer
-func (jWriter *journalWriter) append(e *WriteEntry) {
+//append the BatchAppend to the queue of writer
+func (jWriter *journalWriter) append(e *BatchAppend) {
 	jWriter.queue.Push(e)
 }
 
@@ -91,15 +91,15 @@ func (jWriter *journalWriter) writeLoop() {
 			return
 		}
 		for _, item := range items {
-			request := item.(*WriteEntry)
+			request := item.(*BatchAppend)
 			if jWriter.journal.Size() > jWriter.maxJournalSize {
 				if err := jWriter.createNewJournal(); err != nil {
-					request.cb(-1, err)
+					request.cb(err)
 					continue
 				}
 			}
-			if err := jWriter.journal.Write(request.Entry); err != nil {
-				log.Panicf("journal.Write failed %+v\n", err)
+			if err := jWriter.journal.BatchWrite(request.Entry); err != nil {
+				log.Panicf("journal.BatchWrite failed %+v\n", err)
 			}
 		}
 		if err := jWriter.journal.Flush(); err != nil {

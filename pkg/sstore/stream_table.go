@@ -52,24 +52,40 @@ func (m *streamTable) loadOrCreateStream(streamID int64) (*stream, bool) {
 	return ms, false
 }
 
-//appendEntry append *pb.Entry to stream,and return the stream if it create
-func (m *streamTable) appendEntry(entry *pb.Entry, end *int64) (*stream, error) {
+func (m *streamTable) appendBatchEntry(batchEntry *pb.BatchEntry) ([]*stream, []notify, error) {
+	var streams []*stream
+	var notifies = make([]notify, len(batchEntry.Entries))
+	for _, entry := range batchEntry.Entries {
+		stream, notify, err := m.appendEntry(entry, batchEntry.Ver)
+		if err != nil {
+			return nil, nil, err
+		}
+		if stream != nil {
+			streams = append(streams, stream)
+		}
+		notifies = append(notifies, notify)
+	}
+	m.to = batchEntry.Ver
+	if m.from == nil {
+		m.from = batchEntry.Ver
+	}
+	return streams, notifies, nil
+}
+
+//appendEntry append *pb.Entries to stream,and return the stream if it create
+func (m *streamTable) appendEntry(entry *pb.Entry, ver *pb.Version) (*stream, notify, error) {
 	ms, load := m.loadOrCreateStream(entry.StreamID)
 	n, err := ms.WriteAt(entry.Data, entry.Offset)
 	if err != nil {
-		return nil, err
+		return nil, notify{}, err
 	}
-	if end != nil {
-		*end = ms.end
-	}
-	m.endMap.set(entry.StreamID, ms.end, entry.Ver)
+	m.endMap.set(entry.StreamID, ms.end, ver)
 	m.size += int64(n)
-	m.to = entry.Ver
-	if m.from == nil {
-		m.from = entry.Ver
-	}
 	if load {
-		return nil, nil
+		return nil, notify{}, nil
 	}
-	return ms, nil
+	return ms, notify{
+		streamID: ms.streamID,
+		end:      ms.end,
+	}, nil
 }

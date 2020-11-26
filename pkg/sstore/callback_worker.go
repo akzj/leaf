@@ -34,8 +34,8 @@ func (worker *callbackWorker) callbackLoop() {
 			return
 		}
 		for _, item := range items {
-			request := item.(*WriteEntry)
-			request.cb(request.end, request.err)
+			request := item.(*BatchAppend)
+			request.cb(request.err)
 		}
 	}
 }

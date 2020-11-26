@@ -62,11 +62,10 @@ type Snapshot struct {
 	Version *pb.Version     `json:"version"`
 }
 
-type WriteEntry struct {
-	Entry *pb.Entry
-	end   int64
+type BatchAppend struct {
+	Entry *pb.BatchEntry
 	err   error
-	cb    func(end int64, err error)
+	cb    func(err error)
 }
 
 func Open(options Options) (*Store, error) {
@@ -109,29 +108,29 @@ func (store *Store) nextEntryID() int64 {
 }
 
 //AsyncAppend async append the data to end of the stream
-func (store *Store) AsyncAppend(streamID int64, data []byte, offset int64, cb func(offset int64, err error)) {
-	if err := store.entryQueue.Push(&WriteEntry{
-		Entry: &pb.Entry{
-			StreamID: streamID,
-			Offset:   offset,
+func (store *Store) AsyncAppend(streamID int64, data []byte, offset int64, cb func(err error)) {
+	if err := store.entryQueue.Push(&BatchAppend{
+		Entry: &pb.BatchEntry{
 			Ver: &pb.Version{
-				Term:  0,
 				Index: store.nextEntryID(),
 			},
-			Data: data,
+			Entries: []*pb.Entry{{
+				StreamID: streamID,
+				Offset:   offset,
+				Data:     data,
+			}},
 		},
 		cb: cb,
 	}); err != nil {
-		cb(-1, err)
+		cb(err)
 	}
 }
 
 //AsyncAppend async append the data to end of the stream
-func (store *Store) AppendEntryWithCb(entry *pb.Entry, cb func(offset int64, err error)) {
+func (store *Store) AppendEntryWithCb(entry *pb.BatchEntry, cb func(err error)) {
 	store.version = entry.Ver
-	store.entryQueue.Push(&WriteEntry{
+	store.entryQueue.Push(&BatchAppend{
 		Entry: entry,
-		end:   0,
 		err:   nil,
 		cb:    cb,
 	})
@@ -144,7 +143,7 @@ func (store *Store) Reader(streamID int64) (io.ReadSeeker, error) {
 
 //Watcher create Watcher of the stream
 func (store *Store) Watcher(streamID int64) *Watcher {
-	return store.streamWatcher.newEndWatcher(streamID)
+	return store.streamWatcher.newWatcher(streamID)
 }
 
 //End return the end of stream.
@@ -335,7 +334,7 @@ func (store *Store) commitSegmentFile(filename string) error {
 		}
 	}
 
-	for streamID, info := range segment.meta.SectionOffsets{
+	for streamID, info := range segment.meta.SectionOffsets {
 		store.endMap.set(streamID, info.End, segment.meta.To)
 	}
 

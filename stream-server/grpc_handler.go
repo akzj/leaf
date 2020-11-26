@@ -108,10 +108,9 @@ func (server *StreamServer) WriteStream(stream proto.StreamService_WriteStreamSe
 
 		for _, entry := range request.Entries {
 			entry := entry
-			server.store.WriteRequest(entry, func(offset int64, writerErr error) {
+			server.store.WriteRequest(entry, func( writerErr error) {
 				atomic.AddInt64(&server.count, 1)
 				result := &proto.WriteStreamResult{
-					Offset:    offset,
 					StreamId:  entry.StreamId,
 					RequestId: entry.RequestId,
 				}
